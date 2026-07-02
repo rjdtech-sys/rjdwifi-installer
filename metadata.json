@@ -1,0 +1,9 @@
+{
+  "name": "RJD PISOWIFI Management System",
+  "description": "A comprehensive management interface for PisoWiFi systems, featuring real-time coin pulse detection, network bridge management, analytics, and an automated system updater.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "version_code": 64,
+  "version_name": "3.12.31"
+}

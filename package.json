@@ -1,0 +1,47 @@
+{
+  "name": "rjd-pisowifi",
+  "version": "1.1.0",
+  "description": "Enterprise-grade PisoWiFi Management System",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "build": "node scripts/build.js",
+    "build:optimized": "node scripts/build-optimized-simple.js",
+    "build:lightweight": "esbuild index-optimized.tsx --bundle --minify --outfile=dist/bundle-optimized.js --format=iife --target=es5",
+    "optimize:audio": "node scripts/optimize_audio.js",
+    "test:performance": "node scripts/performance-test.js",
+    "postbuild": "node scripts/download_assets.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.91.1",
+    "adm-zip": "^0.5.16",
+    "dotenv": "^16.6.1",
+    "express": "^4.18.2",
+    "express-fileupload": "^1.5.2",
+    "lucide-react": "^0.563.0",
+    "multer": "^2.0.2",
+    "onoff": "^6.0.3",
+    "pdfkit": "^0.17.2",
+    "pg": "^8.20.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "recharts": "^2.12.0",
+    "routeros-api": "^1.0.2",
+    "socket.io": "^4.7.2",
+    "socket.io-client": "^4.7.2",
+    "sonner": "^2.0.7",
+    "sqlite3": "^5.1.6",
+    "systeminformation": "^5.30.5"
+  },
+  "optionalDependencies": {
+    "serialport": "^12.0.0"
+  },
+  "author": "RJD",
+  "license": "ISC",
+  "devDependencies": {
+    "esbuild": "^0.27.2",
+    "typescript": "^5.9.3"
+  }
+}

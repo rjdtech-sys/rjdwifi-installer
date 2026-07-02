@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PPPoE Expired</title>
+    <style>
+      :root { --bg: #0b1220; --card: rgba(255,255,255,0.06); --card2: rgba(255,255,255,0.03); --border: rgba(255,255,255,0.10); --text: #e5e7eb; --muted: #94a3b8; --muted2: #cbd5e1; --accent: #f59e0b; --ok: #22c55e; --bad: #ef4444; }
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 0; background: radial-gradient(1200px 700px at 20% 0%, rgba(245,158,11,0.18), transparent 60%), radial-gradient(900px 600px at 100% 30%, rgba(34,197,94,0.10), transparent 60%), var(--bg); color: var(--text); }
+      .wrap { max-width: 860px; margin: 0 auto; padding: 28px 16px 40px; }
+      .top { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+      .brand { display: flex; align-items: center; gap: 10px; }
+      .dot { width: 10px; height: 10px; border-radius: 999px; background: var(--accent); box-shadow: 0 0 0 4px rgba(245,158,11,0.18); }
+      .title { font-weight: 900; letter-spacing: 0.12em; font-size: 11px; color: var(--muted2); text-transform: uppercase; }
+      .badge { font-weight: 900; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; padding: 6px 10px; border-radius: 999px; border: 1px solid var(--border); background: rgba(255,255,255,0.04); color: var(--muted2); }
+      .card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; }
+      .hero { padding: 18px 18px 12px; display: grid; grid-template-columns: 1fr; gap: 10px; }
+      h1 { margin: 0; font-size: 18px; letter-spacing: 0.01em; }
+      .sub { margin: 0; color: var(--muted2); line-height: 1.5; font-size: 13px; }
+      .grid { display: grid; grid-template-columns: 1fr; gap: 10px; padding: 0 18px 18px; }
+      @media (min-width: 820px) { .grid { grid-template-columns: 1fr 1fr; } }
+      .panel { background: var(--card2); border: 1px solid var(--border); border-radius: 14px; padding: 14px; }
+      .panel h2 { margin: 0 0 10px; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted2); }
+      .row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.07); }
+      .row:last-child { border-bottom: 0; }
+      .k { font-size: 11px; color: var(--muted); font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; }
+      .v { font-size: 12px; color: var(--text); font-weight: 900; text-align: right; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-weight: 900; }
+      .status { display: inline-flex; align-items: center; gap: 8px; }
+      .pill { padding: 5px 10px; border-radius: 999px; font-size: 10px; font-weight: 900; letter-spacing: 0.12em; text-transform: uppercase; border: 1px solid var(--border); }
+      .pill.bad { background: rgba(239,68,68,0.18); color: #fecaca; border-color: rgba(239,68,68,0.35); }
+      .pill.ok { background: rgba(34,197,94,0.18); color: #bbf7d0; border-color: rgba(34,197,94,0.35); }
+      .actions { display: flex; flex-wrap: wrap; gap: 10px; padding: 14px 18px 18px; border-top: 1px solid rgba(255,255,255,0.07); }
+      .btn { appearance: none; border: 1px solid rgba(245,158,11,0.55); background: rgba(245,158,11,0.18); color: #fff; border-radius: 12px; padding: 10px 12px; font-weight: 900; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }
+      .btn.secondary { border-color: rgba(255,255,255,0.16); background: rgba(255,255,255,0.06); color: var(--muted2); }
+      .foot { margin-top: 14px; font-size: 12px; color: var(--muted); line-height: 1.6; }
+      .small { font-size: 11px; color: var(--muted); }
+      .chat-head { position: fixed; right: 16px; bottom: 16px; width: 56px; height: 56px; border-radius: 999px; border: 1px solid rgba(245,158,11,0.55); background: rgba(245,158,11,0.18); color: #fff; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 12px 30px rgba(0,0,0,0.35); cursor: pointer; user-select: none; }
+      .chat-dot { position: absolute; top: 8px; right: 8px; width: 10px; height: 10px; border-radius: 999px; background: #ef4444; box-shadow: 0 0 0 4px rgba(239,68,68,0.18); display: none; }
+      .chat-panel { position: fixed; right: 16px; bottom: 84px; width: min(380px, calc(100vw - 32px)); height: min(520px, calc(100vh - 120px)); background: rgba(11,18,32,0.95); border: 1px solid rgba(255,255,255,0.14); border-radius: 16px; overflow: hidden; box-shadow: 0 22px 60px rgba(0,0,0,0.50); display: none; }
+      .chat-top { display: flex; align-items: center; justify-content: space-between; padding: 12px 12px; border-bottom: 1px solid rgba(255,255,255,0.10); }
+      .chat-title { font-size: 10px; font-weight: 900; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted2); }
+      .chat-close { width: 32px; height: 32px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.06); color: var(--muted2); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+      .chat-body { padding: 12px; height: calc(100% - 118px); overflow: auto; display: flex; flex-direction: column; gap: 10px; }
+      .msg { max-width: 85%; border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.06); border-radius: 14px; padding: 10px 10px; }
+      .msg.me { align-self: flex-end; border-color: rgba(245,158,11,0.45); background: rgba(245,158,11,0.14); }
+      .msg .meta { font-size: 10px; font-weight: 900; letter-spacing: 0.10em; text-transform: uppercase; color: rgba(255,255,255,0.70); margin-bottom: 6px; display: flex; gap: 8px; justify-content: space-between; }
+      .msg .text { font-size: 12px; color: #fff; line-height: 1.4; white-space: pre-wrap; word-break: break-word; }
+      .chat-input { padding: 10px 12px; border-top: 1px solid rgba(255,255,255,0.10); display: flex; gap: 8px; align-items: center; }
+      .chat-input input { flex: 1; height: 40px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.06); color: #fff; padding: 0 12px; font-size: 12px; outline: none; }
+      .chat-input button { height: 40px; padding: 0 12px; border-radius: 12px; border: 1px solid rgba(245,158,11,0.55); background: rgba(245,158,11,0.18); color: #fff; font-weight: 900; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; cursor: pointer; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="top">
+        <div class="brand">
+          <div class="dot"></div>
+          <div class="title">PPPoE Captive Portal</div>
+        </div>
+        <div class="badge" id="serverTime">...</div>
+      </div>
+
+      <div class="card">
+        <div class="hero">
+          <h1>Account Expired / Payment Required</h1>
+          <p class="sub">Internet access is restricted for this PPPoE account. Review the account details below and contact the administrator to renew.</p>
+        </div>
+
+        <div class="grid">
+          <div class="panel">
+            <h2>Status</h2>
+            <div class="row">
+              <div class="k">Connection</div>
+              <div class="v status">
+                <span class="pill bad" id="expiredPill">Expired</span>
+              </div>
+            </div>
+            <div class="row">
+              <div class="k">Client IP</div>
+              <div class="v mono" id="clientIp">-</div>
+            </div>
+            <div class="row">
+              <div class="k">Expiration</div>
+              <div class="v mono" id="expiresAt">-</div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <h2>Account Info</h2>
+            <div class="row">
+              <div class="k">Username</div>
+              <div class="v mono" id="username">-</div>
+            </div>
+            <div class="row">
+              <div class="k">Account No</div>
+              <div class="v mono" id="accountNo">-</div>
+            </div>
+            <div class="row">
+              <div class="k">Plan</div>
+              <div class="v" id="planName">-</div>
+            </div>
+            <div class="row">
+              <div class="k">Amount</div>
+              <div class="v" id="planPrice">-</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="actions">
+          <a class="btn" href="/admin">Open Admin</a>
+          <a class="btn secondary" href="http://connectivitycheck.gstatic.com/generate_204">Retry</a>
+        </div>
+      </div>
+
+      <div class="foot">
+        <div class="small">If this is your router, please disconnect/reconnect PPPoE after renewal. The portal will close automatically when access is restored.</div>
+      </div>
+    </div>
+
+    <div class="chat-head" id="chatHead" aria-label="Chat">
+      <div class="chat-dot" id="chatDot"></div>
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"></path>
+      </svg>
+    </div>
+
+    <div class="chat-panel" id="chatPanel" role="dialog" aria-label="Chat with admin">
+      <div class="chat-top">
+        <div class="chat-title" id="chatWith">Chat Admin</div>
+        <div class="chat-close" id="chatClose">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"></path>
+          </svg>
+        </div>
+      </div>
+      <div class="chat-body" id="chatBody"></div>
+      <div class="chat-input">
+        <input id="chatInput" type="text" placeholder="Type a message..." autocomplete="off" />
+        <button id="chatSend">Send</button>
+      </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+      (function () {
+        const setText = (id, value) => {
+          const el = document.getElementById(id);
+          if (el) el.textContent = value == null || value === '' ? '-' : String(value);
+        };
+
+        const chatHead = document.getElementById('chatHead');
+        const chatPanel = document.getElementById('chatPanel');
+        const chatClose = document.getElementById('chatClose');
+        const chatDot = document.getElementById('chatDot');
+        const chatBody = document.getElementById('chatBody');
+        const chatInput = document.getElementById('chatInput');
+        const chatSend = document.getElementById('chatSend');
+
+        const escapeHtml = (s) => String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        const fmtTime = (t) => {
+          if (!t) return '';
+          const d = new Date(String(t).replace(' ', 'T'));
+          if (Number.isNaN(d.getTime())) return String(t);
+          return d.toLocaleString();
+        };
+
+        let chatId = null;
+        let socket = null;
+        let chatOpen = false;
+
+        const setChatOpen = (open) => {
+          chatOpen = !!open;
+          if (chatPanel) chatPanel.style.display = chatOpen ? 'block' : 'none';
+          if (chatDot && chatOpen) chatDot.style.display = 'none';
+        };
+
+        const appendMsg = (msg) => {
+          if (!chatBody || !msg) return;
+          const isMe = chatId && String(msg.sender) === String(chatId);
+          const who = isMe ? 'You' : (String(msg.sender || '').toLowerCase() === 'admin' ? 'Admin' : String(msg.sender || ''));
+          const el = document.createElement('div');
+          el.className = 'msg' + (isMe ? ' me' : '');
+          el.innerHTML = `<div class="meta"><span>${escapeHtml(who)}</span><span>${escapeHtml(fmtTime(msg.timestamp))}</span></div><div class="text">${escapeHtml(msg.message)}</div>`;
+          chatBody.appendChild(el);
+          chatBody.scrollTop = chatBody.scrollHeight;
+          if (!chatOpen && !isMe && chatDot) chatDot.style.display = 'block';
+        };
+
+        const initChat = () => {
+          if (!chatId) return;
+          if (socket) return;
+          if (!window.io) return;
+          socket = window.io();
+          socket.on('connect', () => {
+            socket.emit('join_chat', { id: chatId });
+            socket.emit('fetch_messages', { user_id: chatId });
+          });
+          socket.on('chat_history', (msgs) => {
+            if (!chatBody) return;
+            chatBody.innerHTML = '';
+            (msgs || []).forEach(m => appendMsg(m));
+          });
+          socket.on('receive_message', (msg) => {
+            if (!msg) return;
+            const sender = String(msg.sender || '');
+            const recipient = String(msg.recipient || '');
+            if (recipient === 'broadcast' || recipient === chatId || sender === chatId || sender === 'admin') {
+              appendMsg(msg);
+            }
+          });
+        };
+
+        const sendChat = () => {
+          if (!socket || !chatId || !chatInput) return;
+          const text = String(chatInput.value || '').trim();
+          if (!text) return;
+          socket.emit('send_message', { sender: chatId, recipient: 'admin', message: text });
+          chatInput.value = '';
+        };
+
+        if (chatHead) chatHead.addEventListener('click', () => { setChatOpen(!chatOpen); initChat(); });
+        if (chatClose) chatClose.addEventListener('click', () => setChatOpen(false));
+        if (chatSend) chatSend.addEventListener('click', sendChat);
+        if (chatInput) chatInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendChat(); });
+
+        fetch('/api/pppoe/expired-info', { cache: 'no-store' })
+          .then(r => r.json())
+          .then(data => {
+            setText('serverTime', data.server_time || '');
+            setText('clientIp', data.ip || '');
+
+            if (data && data.account) {
+              setText('username', data.account.username || '-');
+              setText('accountNo', data.account.account_number || '-');
+              setText('expiresAt', (data.account.expires_at || '').replace('T', ' '));
+              if (data.account.username) {
+                chatId = 'pppoe:' + String(data.account.username).trim();
+              }
+            }
+
+            if (data && data.billing) {
+              setText('planName', data.billing.billing_profile_name || data.billing.profile_name || '-');
+              if (typeof data.billing.price === 'number') {
+                setText('planPrice', '₱' + data.billing.price.toFixed(2));
+              }
+            }
+
+            if (!chatId && data && data.ip) {
+              chatId = 'pppoe-ip:' + String(data.ip).trim();
+            }
+            initChat();
+
+            const pill = document.getElementById('expiredPill');
+            if (pill) {
+              const expired = !!(data && data.expired);
+              pill.className = 'pill ' + (expired ? 'bad' : 'ok');
+              pill.textContent = expired ? 'Expired' : 'Active';
+            }
+          })
+          .catch(() => {});
+      })();
+    </script>
+  </body>
+</html>

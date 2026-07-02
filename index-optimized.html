@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#2563eb" />
+    <title>RJD PISOWIFI - Access Portal</title>
+    
+    <!-- Critical CSS inlined for fast rendering -->
+    <style>
+      /* Critical styles for instant rendering */
+      * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+      
+      body { 
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
+        background: #f8fafc; 
+        color: #0f172a; 
+        line-height: 1.5;
+        min-height: 100vh;
+      }
+
+      /* Instant splash screen */
+      #splash {
+        position: fixed;
+        inset: 0;
+        background: #f8fafc;
+        z-index: 99999;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        transition: opacity 0.3s ease-out;
+      }
+      
+      .loader {
+        width: 32px;
+        height: 32px;
+        border: 3px solid rgba(37, 99, 235, 0.1);
+        border-top-color: #2563eb;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin-bottom: 0.5rem;
+      }
+      
+      @keyframes spin { to { transform: rotate(360deg); } }
+      
+      #splash p { 
+        color: #0f172a; 
+        font-weight: 900; 
+        font-size: 10px; 
+        letter-spacing: 0.2em; 
+        text-transform: uppercase; 
+      }
+
+      /* Core layout */
+      .flex { display: flex; }
+      .flex-col { flex-direction: column; }
+      .items-center { align-items: center; }
+      .justify-center { justify-content: center; }
+      .text-center { text-align: center; }
+      .w-full { width: 100%; }
+      .min-h-screen { min-height: 100vh; }
+      .p-4 { padding: 1rem; }
+      .p-8 { padding: 2rem; }
+      .px-6 { padding-left: 1.5rem; padding-right: 1.5rem; }
+      .mb-4 { margin-bottom: 1rem; }
+      .mb-8 { margin-bottom: 2rem; }
+      .rounded-3xl { border-radius: 1.5rem; }
+      .rounded-2xl { border-radius: 1rem; }
+      .shadow-xl { box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04); }
+      .uppercase { text-transform: uppercase; }
+      .font-black { font-weight: 900; }
+      .text-xs { font-size: 0.75rem; }
+      .text-sm { font-size: 0.875rem; }
+      .text-lg { font-size: 1.125rem; }
+      .text-2xl { font-size: 1.5rem; }
+      .text-3xl { font-size: 1.875rem; }
+      .text-4xl { font-size: 2.25rem; }
+      .text-6xl { font-size: 3.75rem; }
+      .tracking-tighter { letter-spacing: -0.05em; }
+      .tracking-widest { letter-spacing: 0.1em; }
+      .text-white { color: #ffffff; }
+      .text-slate-400 { color: #94a3b8; }
+      .text-slate-500 { color: #64748b; }
+      .text-slate-900 { color: #0f172a; }
+      .text-blue-600 { color: #2563eb; }
+      .text-green-500 { color: #22c55e; }
+      .text-orange-500 { color: #f97316; }
+      .bg-white { background-color: #ffffff; }
+      .bg-slate-50 { background-color: #f8fafc; }
+      .bg-slate-900 { background-color: #0f172a; }
+      .bg-blue-50 { background-color: #eff6ff; }
+      .bg-blue-600 { background-color: #2563eb; }
+      .bg-orange-500 { background-color: #f97316; }
+      .bg-green-600 { background-color: #16a34a; }
+      .bg-red-50 { background-color: #fef2f2; }
+      .bg-orange-50 { background-color: #fff7ed; }
+      
+      /* Portal specific critical styles */
+      .portal-header {
+        background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+        padding: 3rem 2rem 4rem 2rem;
+        text-align: center;
+        color: white;
+        border-bottom-left-radius: 50px;
+        border-bottom-right-radius: 50px;
+        box-shadow: 0 20px 40px rgba(37, 99, 235, 0.25);
+      }
+      
+      .portal-card {
+        background: #ffffff;
+        margin: -3rem 1.5rem 2rem 1.5rem;
+        padding: 2rem;
+        border-radius: 40px;
+        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.08);
+        text-align: center;
+        border: 1px solid rgba(226, 232, 240, 0.6);
+      }
+      
+      .portal-btn {
+        background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+        color: white;
+        padding: 1rem 1.5rem;
+        border-radius: 24px;
+        font-weight: 900;
+        text-transform: uppercase;
+        border: none;
+        width: 100%;
+        font-size: 1.125rem;
+        letter-spacing: 0.05em;
+        box-shadow: 0 15px 30px rgba(37, 99, 235, 0.35);
+        cursor: pointer;
+        display: block;
+        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      }
+      
+      .portal-btn:active { 
+        transform: scale(0.96); 
+        box-shadow: 0 5px 15px rgba(37, 99, 235, 0.3); 
+      }
+      
+      .rates-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 1rem;
+        padding: 0 1.5rem;
+        margin-bottom: 2rem;
+      }
+      
+      .rate-item {
+        background: white;
+        padding: 1rem;
+        border-radius: 30px;
+        text-align: center;
+        border: 1px solid #f1f5f9;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.03);
+      }
+      
+      .rate-pesos { 
+        font-size: 1.5rem; 
+        font-weight: 900; 
+        color: #0f172a; 
+        display: block; 
+      }
+      
+      .rate-time { 
+        font-size: 0.65rem; 
+        font-weight: 900; 
+        color: #2563eb; 
+        text-transform: uppercase; 
+        margin-top: 0.5rem; 
+        display: block; 
+        letter-spacing: 0.1em; 
+      }
+
+      #root { min-height: 100vh; }
+      
+      /* Reduced motion for older devices */
+      @media (prefers-reduced-motion: reduce) {
+        * { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+      }
+      
+      /* High contrast mode support */
+      @media (prefers-contrast: high) {
+        .portal-card { border: 2px solid #0f172a; }
+        .rate-item { border: 2px solid #0f172a; }
+      }
+    </style>
+    
+    <!-- Preload critical resources -->
+    <link rel="preload" href="/dist/bundle-optimized.js" as="script" />
+    <link rel="preload" href="/dist/tailwind.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'" />
+    <noscript><link rel="stylesheet" href="/dist/tailwind.min.css"></noscript>
+    
+    <!-- DNS prefetch for API calls -->
+    <link rel="dns-prefetch" href="//localhost" />
+    <link rel="dns-prefetch" href="//connectivitycheck.gstatic.com" />
+    
+    <!-- Instant theme detection -->
+    <script>
+      // Critical theme detection
+      (function() {
+        try {
+          var theme = localStorage.getItem('rjd_pisowifi_theme') || 'default';
+          document.documentElement.setAttribute('data-theme', theme);
+          
+          // Set theme color for mobile browsers
+          var colors = {
+            'default': '#2563eb',
+            'dark': '#1e293b',
+            'eco': '#16a34a',
+            'terminal': '#000000'
+          };
+          
+          var meta = document.querySelector('meta[name="theme-color"]');
+          if (meta && colors[theme]) {
+            meta.setAttribute('content', colors[theme]);
+          }
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <!-- Instant splash screen -->
+    <div id="splash">
+      <div class="loader"></div>
+      <p>Loading Portal...</p>
+    </div>
+    
+    <div id="root"></div>
+    
+    <!-- Optimized bundle loading -->
+    <script>
+      // Progressive enhancement: Load optimized version for old devices
+      (function() {
+        var isLowEndDevice = function() {
+          var memory = navigator.deviceMemory || 4;
+          var cores = navigator.hardwareConcurrency || 4;
+          var connection = navigator.connection || {};
+          var isSlowConnection = /slow-2g|2g/.test(connection.effectiveType || '');
+          var isOldAndroid = /Android.*Chrome\/[.0-9]*/.test(navigator.userAgent) && 
+                             parseInt((/Android\s([0-9]+)/.exec(navigator.userAgent) || ['', '0'])[1]) < 8;
+          
+          return memory < 2 || cores < 4 || isSlowConnection || isOldAndroid;
+        };
+        
+        var bundleSrc = isLowEndDevice() ? '/dist/bundle-optimized.js' : '/dist/bundle.js';
+        var script = document.createElement('script');
+        script.src = bundleSrc;
+        script.onload = function() {
+          // Hide splash screen after bundle loads
+          var splash = document.getElementById('splash');
+          if (splash) {
+            splash.style.opacity = '0';
+            setTimeout(function() { splash.remove(); }, 300);
+          }
+        };
+        document.body.appendChild(script);
+      })();
+    </script>
+    
+    <!-- Fallback for very old browsers -->
+    <script nomodule>
+      alert('Your browser is not supported. Please upgrade to a modern browser.');
+    </script>
+  </body>
+</html>
