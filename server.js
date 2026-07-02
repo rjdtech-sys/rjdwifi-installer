@@ -7748,10 +7748,9 @@ app.post('/api/devices/scan', requireAdmin, async (req, res) => {
     const scannedMacs = scannedDevices.map(d => d.mac);
     if (scannedMacs.length > 0) {
       const placeholders = scannedMacs.map(() => '?').join(',');
-      // Only mark as inactive if device doesn't have an active session
-      await db.run(`UPDATE wifi_devices SET is_active = 0 WHERE mac NOT IN (${placeholders}) AND mac NOT IN (SELECT mac FROM sessions WHERE remaining_seconds > 0)`, scannedMacs);
+      await db.run(`UPDATE wifi_devices SET is_active = 0 WHERE mac NOT IN (${placeholders})`, scannedMacs);
     } else {
-      await db.run('UPDATE wifi_devices SET is_active = 0 WHERE mac NOT IN (SELECT mac FROM sessions WHERE remaining_seconds > 0)');
+      await db.run('UPDATE wifi_devices SET is_active = 0');
     }
     
     // Return updated device list with session data merged
