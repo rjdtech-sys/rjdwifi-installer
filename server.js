@@ -8836,8 +8836,18 @@ async function bootupRestore(isRestricted = false) {
 
   // 4. Restore GPIO & Hardware
   const board = await db.get('SELECT value FROM config WHERE key = ?', ['boardType']);
-  const pin = await db.get('SELECT value FROM config WHERE key = ?', ['coinPin']);
-  const model = await db.get('SELECT value FROM config WHERE key = ?', ['boardModel']);
+  let pin = await db.get('SELECT value FROM config WHERE key = ?', ['coinPin']);
+  let model = await db.get('SELECT value FROM config WHERE key = ?', ['boardModel']);
+  if (board?.value === 'orange_pi' && !model?.value) {
+    await db.run('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)', ['boardModel', 'orange_pi_one']);
+    model = { value: 'orange_pi_one' };
+    console.log('[GPIO] Migrated legacy Orange Pi configuration to model orange_pi_one.');
+  }
+  if (board?.value === 'orange_pi' && model?.value === 'orange_pi_one' && parseInt(pin?.value || '2', 10) === 2) {
+    await db.run('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)', ['coinPin', '3']);
+    pin = { value: '3' };
+    console.log('[GPIO] Migrated invalid Orange Pi One coin pin 2 to physical pin 3 (PA12).');
+  }
   const espIpAddress = await db.get('SELECT value FROM config WHERE key = ?', ['espIpAddress']);
   const espPort = await db.get('SELECT value FROM config WHERE key = ?', ['espPort']);
   const coinSlots = await db.get('SELECT value FROM config WHERE key = ?', ['coinSlots']);

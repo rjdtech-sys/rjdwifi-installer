@@ -161,6 +161,11 @@ sed -i "s|^RJD_EDGE_API_TOKEN=.*|RJD_EDGE_API_TOKEN=${EDGE_TOKEN}|" .env
 sqlite3 pisowifi.sqlite \
   "CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT); INSERT OR REPLACE INTO config (key, value) VALUES ('boardType', '${BOARD}');"
 
+if [ "${BOARD}" = "orange_pi" ]; then
+  sqlite3 pisowifi.sqlite \
+    "INSERT OR IGNORE INTO config (key, value) VALUES ('boardModel', 'orange_pi_one'); INSERT OR IGNORE INTO config (key, value) VALUES ('coinPin', '3');"
+fi
+
 install_setup_ap_service
 
 pm2 delete rjd-pisowifi 2>/dev/null || true
