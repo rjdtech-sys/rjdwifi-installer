@@ -13,13 +13,22 @@ Clean Armbian install:
 cd /tmp
 git clone --depth 1 https://github.com/rjdtech-sys/rjdwifi-installer.git
 cd rjdwifi-installer
-sudo -E bash deploy/edge/bootstrap-clean-armbian.sh
+sudo RJD_EDGE_API_TOKEN=... bash deploy/edge/bootstrap-clean-armbian.sh
 ```
 
 Direct install from an already-cloned repository:
 
 ```bash
-sudo -E bash install.sh
+sudo RJD_EDGE_API_TOKEN=... bash deploy/edge/install-customer-device.sh
+```
+
+Repair an already-installed device that shows `Invalid edge token` in the setup
+wizard:
+
+```bash
+sudo sed -i 's|^RJD_EDGE_API_TOKEN=.*|RJD_EDGE_API_TOKEN=...|' /opt/rjd-pisowifi/.env
+sudo sqlite3 /opt/rjd-pisowifi/pisowifi.sqlite "INSERT OR REPLACE INTO config (key, value) VALUES ('boardType', 'orange_pi');"
+pm2 restart rjd-pisowifi --update-env
 ```
 
 Hardware image first boot clones this repository into `/opt/rjd-pisowifi`, runs

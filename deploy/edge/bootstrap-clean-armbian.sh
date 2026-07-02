@@ -9,7 +9,7 @@ LOG_FILE="${RJD_BOOTSTRAP_LOG:-/var/log/rjd-clean-armbian-bootstrap.log}"
 exec > >(tee -a "${LOG_FILE}") 2>&1
 
 if [ "${EUID}" -ne 0 ]; then
-  echo "Run as root: sudo -E bash deploy/edge/bootstrap-clean-armbian.sh"
+  echo "Run as root: sudo RJD_EDGE_API_TOKEN=... bash deploy/edge/bootstrap-clean-armbian.sh"
   exit 1
 fi
 

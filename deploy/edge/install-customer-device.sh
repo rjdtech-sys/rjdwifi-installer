@@ -14,6 +14,13 @@ if [ "${EUID}" -ne 0 ]; then
   exit 1
 fi
 
+if [ -z "${EDGE_TOKEN}" ] || [ "${EDGE_TOKEN}" = "replace-with-token-issued-by-rjd-cloud" ]; then
+  echo "[RJD Edge] RJD_EDGE_API_TOKEN is required for cloud setup/licensing."
+  echo "[RJD Edge] Run with the token used by https://api.rjdtech.shop:"
+  echo "  sudo RJD_EDGE_API_TOKEN=... bash deploy/edge/install-customer-device.sh"
+  exit 1
+fi
+
 detect_board() {
   if grep -qi "raspberry pi" /proc/device-tree/model 2>/dev/null; then
     echo "raspberry_pi"
@@ -149,9 +156,10 @@ fi
 
 sed -i "s|^RJD_LICENSE_API_URL=.*|RJD_LICENSE_API_URL=${LICENSE_API_URL}|" .env
 sed -i "s|^RJD_BOARD_TYPE=.*|RJD_BOARD_TYPE=${BOARD}|" .env
-if [ -n "${EDGE_TOKEN}" ]; then
-  sed -i "s|^RJD_EDGE_API_TOKEN=.*|RJD_EDGE_API_TOKEN=${EDGE_TOKEN}|" .env
-fi
+sed -i "s|^RJD_EDGE_API_TOKEN=.*|RJD_EDGE_API_TOKEN=${EDGE_TOKEN}|" .env
+
+sqlite3 pisowifi.sqlite \
+  "CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT); INSERT OR REPLACE INTO config (key, value) VALUES ('boardType', '${BOARD}');"
 
 install_setup_ap_service
 
