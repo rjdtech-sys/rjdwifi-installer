@@ -1452,6 +1452,84 @@ app.get('/api/setup/dependencies', async (req, res) => {
   });
 });
 
+async function isSetupRequiredForGate() {
+  const localState = await getLocalSetupState();
+  return Boolean(localState.needsPasswordChange || !localState.hasLicense);
+}
+
+function isSetupAssetPath(pathname) {
+  return (
+    pathname.startsWith('/dist/') ||
+    pathname.startsWith('/assets/') ||
+    pathname.startsWith('/uploads/') ||
+    pathname.endsWith('.js') ||
+    pathname.endsWith('.css') ||
+    pathname.endsWith('.ico') ||
+    pathname.endsWith('.png') ||
+    pathname.endsWith('.jpg') ||
+    pathname.endsWith('.jpeg') ||
+    pathname.endsWith('.gif') ||
+    pathname.endsWith('.svg') ||
+    pathname.endsWith('.webp') ||
+    pathname.endsWith('.woff') ||
+    pathname.endsWith('.woff2') ||
+    pathname.endsWith('.ttf')
+  );
+}
+
+// Server-side setup gate. The React setup wizard lives at /setup, but without
+// this middleware direct /admin or / access could still load the normal app.
+app.use(async (req, res, next) => {
+  try {
+    const pathname = String(req.path || '/').toLowerCase();
+
+    if (
+      pathname === '/setup' ||
+      pathname.startsWith('/setup/') ||
+      pathname === '/setup/check' ||
+      pathname === '/setup/status' ||
+      pathname === '/setup/trial' ||
+      pathname === '/setup/activate' ||
+      pathname === '/setup/password' ||
+      pathname.startsWith('/api/setup/') ||
+      isSetupAssetPath(pathname)
+    ) {
+      return next();
+    }
+
+    if (!(await isSetupRequiredForGate())) {
+      return next();
+    }
+
+    if (pathname.startsWith('/api/')) {
+      return res.status(423).json({
+        success: false,
+        setup_required: true,
+        redirect: '/setup',
+        error: 'Device setup must be completed first'
+      });
+    }
+
+    if (req.method === 'GET' || req.method === 'HEAD') {
+      return res.redirect(302, '/setup');
+    }
+
+    return res.status(423).json({
+      success: false,
+      setup_required: true,
+      redirect: '/setup',
+      error: 'Device setup must be completed first'
+    });
+  } catch (err) {
+    console.error('[Setup] Gate failed:', err);
+    return next();
+  }
+});
+
+app.get(['/setup', '/setup/*'], (req, res) => {
+  res.sendFile(path.join(__dirname, 'index.html'));
+});
+
 // CLOUD UPDATE MANAGEMENT
 app.get('/api/system/updates/pending', requireAdmin, (req, res) => {
   const pendingUpdatePath = path.join(__dirname, 'data/pending_update.json');
