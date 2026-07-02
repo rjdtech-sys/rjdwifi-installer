@@ -48,8 +48,19 @@ find_wan_interface() {
         return
     done
 
-    # 4. Fallback
-    echo "eth0"
+    # 4. Fallback to any non-virtual interface if predictable-name matching missed it
+    for iface in /sys/class/net/*; do
+        [ -d "$iface" ] || continue
+        local name
+        name=$(basename "$iface")
+        case "$name" in
+            lo|br*|vlan*|ppp*|zt*|tun*|tap*|wg*|docker*|veth*|virbr*|ifb*) continue ;;
+        esac
+        echo "$name"
+        return
+    done
+
+    echo ""
 }
 
 # Check if interface has a valid global IPv4 address
@@ -127,6 +138,10 @@ force_link_toggle() {
 log "Starting WAN DHCP wait service..."
 
 WAN=$(find_wan_interface)
+if [ -z "$WAN" ]; then
+    log "No WAN interface detected."
+    exit 1
+fi
 log "Detected WAN interface: $WAN"
 
 # Check if already has IP

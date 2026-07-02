@@ -7901,28 +7901,36 @@ app.post('/api/system/sync', requireAdmin, async (req, res) => {
   try {
     console.log('[System] Syncing filesystem...');
     
-    // SYNC WLAN0 CONFIG BACK TO DB (As requested by user)
-    // This ensures manual file edits are saved to SQLite
-    const wlanConfigPath = '/etc/hostapd/hostapd_wlan0.conf';
-    if (fs.existsSync(wlanConfigPath)) {
+    // Sync hostapd configs back to DB. Interface names vary by OS:
+    // wlan0 on older images, wlx... on USB WiFi, etc.
+    const hostapdDir = '/etc/hostapd';
+    const wlanConfigPaths = fs.existsSync(hostapdDir)
+      ? fs.readdirSync(hostapdDir)
+          .filter(name => /^hostapd_.+\.conf$/.test(name))
+          .map(name => path.join(hostapdDir, name))
+      : [];
+
+    for (const wlanConfigPath of wlanConfigPaths) {
         try {
             const content = fs.readFileSync(wlanConfigPath, 'utf8');
             const ssidMatch = content.match(/^ssid=(.+)$/m);
+            const interfaceMatch = content.match(/^interface=(.+)$/m);
             const passMatch = content.match(/^wpa_passphrase=(.+)$/m);
             
-            if (ssidMatch) {
+            if (ssidMatch && interfaceMatch) {
+                const iface = interfaceMatch[1].trim();
                 const ssid = ssidMatch[1].trim();
                 const pass = passMatch ? passMatch[1].trim() : '';
                 
                 const bridgeMatch = content.match(/^bridge=(.+)$/m);
                 const bridge = bridgeMatch ? bridgeMatch[1].trim() : 'br0';
                 
-                console.log(`[System] Syncing wlan0 config to DB: SSID=${ssid}`);
+                console.log(`[System] Syncing ${iface} hostapd config to DB: SSID=${ssid}`);
                 await db.run('INSERT OR REPLACE INTO wireless_settings (interface, ssid, password, bridge) VALUES (?, ?, ?, ?)', 
-                  ['wlan0', ssid, pass, bridge]);
+                  [iface, ssid, pass, bridge]);
             }
         } catch (e) {
-            console.error('[System] Failed to sync wlan0 config:', e.message);
+            console.error(`[System] Failed to sync ${wlanConfigPath}:`, e.message);
         }
     }
 
@@ -9252,7 +9260,7 @@ function startBackgroundTimers() {
       } catch (e) { /* nftables may not be available */ }
 
       // ─── TC ORPHAN CLEANUP ───
-      const { stdout: interfacesOutput } = await execPromise(`ip link show | grep -E "eth|wlan|br|vlan|ifb" | awk '{print $2}' | sed 's/:$//'`).catch(() => ({ stdout: '' }));
+      const { stdout: interfacesOutput } = await execPromise(`ip -o link show | awk -F': ' '$2 ~ /^(en|eth|wl|wlan|br|vlan|ifb)/ {print $2}'`).catch(() => ({ stdout: '' }));
       const interfaces = interfacesOutput.trim().split('\n').filter(i => i);
       for (const iface of interfaces) {
         try {
