@@ -292,7 +292,7 @@ function normalizeCoinSlot(slot) {
 }
 
 function getDefaultRelayPinForBoard(boardType, boardModel) {
-  // LPB Custom Board v2 convention for Orange Pi: relay IN signal on physical Pin 5.
+  // RJD Custom Board v2 convention for Orange Pi: relay IN signal on physical Pin 5.
   // A saved blank relayPin still means "Disabled"; this default only applies when no
   // relayPin config row exists yet.
   if (boardType === 'orange_pi' || boardType === 'orange_pi_one') {

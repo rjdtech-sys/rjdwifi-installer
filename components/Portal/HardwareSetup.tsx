@@ -8,7 +8,7 @@ interface Props {
   onSaved: () => void;
 }
 
-const LPB_CUSTOM_BOARD_V2_RELAY_PIN = 5;
+const RJD_CUSTOM_BOARD_V2_RELAY_PIN = 5;
 const PHYSICAL_GPIO_PINS = [2, 3, 4, 5, 7, 8, 10, 11, 14, 15, 17, 18, 22, 23, 24, 25, 27];
 
 const HardwareSetup: React.FC<Props> = ({ onClose, onSaved }) => {
@@ -104,7 +104,7 @@ const HardwareSetup: React.FC<Props> = ({ onClose, onSaved }) => {
                 active={board === 'orange_pi'} 
                 onClick={() => {
                   setBoard('orange_pi');
-                  if (relayPin === null) setRelayPin(LPB_CUSTOM_BOARD_V2_RELAY_PIN);
+                  if (relayPin === null) setRelayPin(RJD_CUSTOM_BOARD_V2_RELAY_PIN);
                 }}
                 title="Orange Pi"
                 sub="All Models"
@@ -298,12 +298,12 @@ const HardwareSetup: React.FC<Props> = ({ onClose, onSaved }) => {
                       : 'border-slate-200 text-slate-400 hover:border-slate-400'
                   }`}
                 >
-                  {p === LPB_CUSTOM_BOARD_V2_RELAY_PIN ? '5 LPB' : p}
+                  {p === RJD_CUSTOM_BOARD_V2_RELAY_PIN ? '5 RJD' : p}
                 </button>
               ))}
             </div>
             <p className="text-[10px] text-slate-400 mt-3 font-bold">
-              LPB Custom Board v2 default relay IN is physical Pin 5. Use OFF/Disabled if you do not want relay output.
+              RJD Custom Board v2 default relay IN is physical Pin 5. Use OFF/Disabled if you do not want relay output.
             </p>
             <div className="mt-3 flex flex-wrap items-center gap-3">
               <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Relay Mode</span>
