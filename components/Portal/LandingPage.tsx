@@ -40,6 +40,7 @@ const LandingPage: React.FC<Props> = ({ rates, sessions, onSessionStart, refresh
   const [freeInternetConfig, setFreeInternetConfig] = useState<{ enabled: boolean; minutes: number; message: string; cooldownDays: number }>({ enabled: false, minutes: 0, message: '', cooldownDays: 1 });
   const [isClaimingFreeInternet, setIsClaimingFreeInternet] = useState(false);
   const [freeInternetError, setFreeInternetError] = useState<string | null>(null);
+  const [localSessionOverride, setLocalSessionOverride] = useState<UserSession | null>(null);
 
   // Hardcoded default rates in case the API fetch returns nothing
   const defaultRates: Rate[] = [
@@ -393,8 +394,20 @@ const LandingPage: React.FC<Props> = ({ rates, sessions, onSessionStart, refresh
     };
   }, [mySession, myMac, clientIp]);
 
-  // Use server session as final fallback
-  const activeMySession = mySession || serverSession;
+  useEffect(() => {
+    if (!localSessionOverride || !mySession) return;
+    if (localSessionOverride.token && mySession.token !== localSessionOverride.token) return;
+
+    const localPaused = Boolean(localSessionOverride.isPaused);
+    const serverPaused = Boolean(mySession.isPaused);
+    if (localPaused === serverPaused) {
+      setLocalSessionOverride(null);
+    }
+  }, [localSessionOverride, mySession]);
+
+  // Use immediate local pause/resume state first, then normal live session data,
+  // then the server-side fallback used for Chrome/captive portal context drift.
+  const activeMySession = localSessionOverride || mySession || serverSession;
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -489,7 +502,13 @@ const LandingPage: React.FC<Props> = ({ rates, sessions, onSessionStart, refresh
     try {
       const result = await apiClient.pauseSession(activeMySession.token);
       if (result.success) {
-        if (refreshSessions) refreshSessions();
+        const pausedSession = result.session || { ...activeMySession, isPaused: true };
+        setLocalSessionOverride({
+          ...pausedSession,
+          isPaused: true
+        });
+        setServerSession(null);
+        if (refreshSessions) await refreshSessions();
       } else {
         alert('Pause failed: ' + result.message);
       }
@@ -503,7 +522,13 @@ const LandingPage: React.FC<Props> = ({ rates, sessions, onSessionStart, refresh
     try {
       const result = await apiClient.resumeSession(activeMySession.token);
       if (result.success) {
-        if (refreshSessions) refreshSessions();
+        const resumedSession = result.session || { ...activeMySession, isPaused: false };
+        setLocalSessionOverride({
+          ...resumedSession,
+          isPaused: false
+        });
+        setServerSession(null);
+        if (refreshSessions) await refreshSessions();
         
         // Proactive network refresh after resume
         setTimeout(async () => {

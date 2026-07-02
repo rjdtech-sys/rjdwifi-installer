@@ -1,5 +1,5 @@
 
-import { Rate, NetworkInterface, SystemConfig, WanConfig, VlanConfig, WanInterface, WifiDevice, DeviceSession, PPPoEServerConfig, PPPoEUser, PPPoESession, QoSConfig, PPPoEProfile, PPPoEBillingProfile, PPPoEPool, PPPoESale, MikrotikRouter, MikrotikBillingData, MikrotikRouterSnapshot, Employee, DTRRecord, PayrollRecord, Equipment, EquipmentWithdrawal, RentalDevice, RentalSession, RentalReport, PhoneRentalRate } from '../types';
+import { Rate, NetworkInterface, SystemConfig, WanConfig, VlanConfig, WanInterface, WifiDevice, DeviceSession, PPPoEServerConfig, PPPoEUser, PPPoESession, QoSConfig, PPPoEProfile, PPPoEBillingProfile, PPPoEPool, PPPoESale, MikrotikRouter, MikrotikBillingData, MikrotikRouterSnapshot, Employee, DTRRecord, PayrollRecord, Equipment, EquipmentWithdrawal, RentalDevice, RentalSession, RentalReport, PhoneRentalRate, UserSession } from '../types';
 
 const API_BASE = '/api';
 
@@ -717,7 +717,7 @@ export const apiClient = {
     return handleResponse(res);
   },
 
-  async pauseSession(token: string): Promise<{ success: boolean; message: string }> {
+  async pauseSession(token: string): Promise<{ success: boolean; message: string; session?: UserSession }> {
     const res = await fetch(`${API_BASE}/sessions/pause`, {
       method: 'POST',
       headers: getHeaders(),
@@ -726,7 +726,7 @@ export const apiClient = {
     return handleResponse(res);
   },
 
-  async resumeSession(token: string): Promise<{ success: boolean; message: string }> {
+  async resumeSession(token: string): Promise<{ success: boolean; message: string; session?: UserSession }> {
     const res = await fetch(`${API_BASE}/sessions/resume`, {
       method: 'POST',
       headers: getHeaders(),

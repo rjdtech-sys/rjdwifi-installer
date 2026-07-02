@@ -2349,6 +2349,31 @@ async function installTailscaleRemoteAccess(authKey) {
   };
 }
 
+async function getSessionByTokenForClient(token) {
+  if (!token) return null;
+  const row = await db.get(
+    `SELECT mac,
+            ip,
+            remaining_seconds as remainingSeconds,
+            total_paid as totalPaid,
+            connected_at as connectedAt,
+            is_paused as isPaused,
+            token,
+            pausable as isPausable
+       FROM sessions
+      WHERE token = ?
+        AND remaining_seconds > 0`,
+    [token]
+  );
+
+  if (!row) return null;
+  return {
+    ...row,
+    isPaused: row.isPaused === 1 || row.isPaused === true,
+    isPausable: row.isPausable
+  };
+}
+
 // Initialize license manager (will use env variables if available)
 const licenseManager = initializeLicenseManager();
 const setupCloudClient = new CloudLicenseClient();
@@ -3906,7 +3931,11 @@ app.post('/api/session/pause', async (req, res) => {
     }
 
     if (session.is_paused === 1) {
-      return res.json({ success: true, message: 'Session is already paused.' });
+      return res.json({
+        success: true,
+        message: 'Session is already paused.',
+        session: await getSessionByTokenForClient(token)
+      });
     }
 
     await db.run('UPDATE sessions SET is_paused = 1 WHERE token = ?', [token]);
@@ -3919,7 +3948,11 @@ app.post('/api/session/pause', async (req, res) => {
     }
 
     console.log(`[Session] Paused: MAC=${session.mac} | Token=${token}`);
-    res.json({ success: true, message: 'Session paused.' });
+    res.json({
+      success: true,
+      message: 'Session paused.',
+      session: await getSessionByTokenForClient(token)
+    });
   } catch (err) {
     console.error('[Session] Pause error:', err);
     res.status(500).json({ success: false, message: 'Failed to pause session.' });
@@ -3936,7 +3969,11 @@ app.post('/api/session/resume', async (req, res) => {
     if (!session) return res.status(404).json({ success: false, message: 'Active session not found.' });
 
     if (!session.is_paused || session.is_paused === 0) {
-      return res.json({ success: true, message: 'Session is already active.' });
+      return res.json({
+        success: true,
+        message: 'Session is already active.',
+        session: await getSessionByTokenForClient(token)
+      });
     }
 
     await db.run('UPDATE sessions SET is_paused = 0 WHERE token = ?', [token]);
@@ -3949,7 +3986,11 @@ app.post('/api/session/resume', async (req, res) => {
     }
 
     console.log(`[Session] Resumed: MAC=${session.mac} | Token=${token}`);
-    res.json({ success: true, message: 'Session resumed.' });
+    res.json({
+      success: true,
+      message: 'Session resumed.',
+      session: await getSessionByTokenForClient(token)
+    });
   } catch (err) {
     console.error('[Session] Resume error:', err);
     res.status(500).json({ success: false, message: 'Failed to resume session.' });
@@ -4454,11 +4495,23 @@ app.post('/api/sessions/pause', async (req, res) => {
       return res.status(400).json({ error: 'This session is not pausable' });
     }
 
+    if (session.is_paused === 1) {
+      return res.json({
+        success: true,
+        message: 'Time is already paused.',
+        session: await getSessionByTokenForClient(token)
+      });
+    }
+
     await db.run('UPDATE sessions SET is_paused = 1 WHERE token = ?', [token]);
     await network.blockMAC(session.mac, session.ip);
 
     console.log(`[AUTH] Session paused for ${session.mac}`);
-    res.json({ success: true, message: 'Time paused. Internet access suspended.' });
+    res.json({
+      success: true,
+      message: 'Time paused. Internet access suspended.',
+      session: await getSessionByTokenForClient(token)
+    });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -4470,13 +4523,25 @@ app.post('/api/sessions/resume', async (req, res) => {
     const session = await db.get('SELECT * FROM sessions WHERE token = ?', [token]);
     if (!session) return res.status(404).json({ error: 'Session not found' });
 
+    if (!session.is_paused || session.is_paused === 0) {
+      return res.json({
+        success: true,
+        message: 'Time is already active.',
+        session: await getSessionByTokenForClient(token)
+      });
+    }
+
     await db.run('UPDATE sessions SET is_paused = 0 WHERE token = ?', [token]);
     
     // Use forceNetworkRefresh to ensure internet returns properly
     await network.forceNetworkRefresh(session.mac, session.ip);
 
     console.log(`[AUTH] Session resumed for ${session.mac}`);
-    res.json({ success: true, message: 'Time resumed. Internet access restored.' });
+    res.json({
+      success: true,
+      message: 'Time resumed. Internet access restored.',
+      session: await getSessionByTokenForClient(token)
+    });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
