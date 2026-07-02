@@ -25,6 +25,7 @@ WIFI_IFACE="${RJD_SETUP_WIFI_IFACE:-}"
 HOSTAPD_CONF="/etc/hostapd/rjd-setup-ap.conf"
 DNSMASQ_CONF="/etc/dnsmasq.d/rjd-setup-ap.conf"
 DNSMASQ_PID="/run/rjd-setup-dnsmasq.pid"
+NM_UNMANAGED_CONF="/etc/NetworkManager/conf.d/rjd-setup-ap-unmanaged.conf"
 
 echo "[RJD Setup AP] Starting at $(date -Is)"
 
@@ -38,18 +39,46 @@ if ! command -v hostapd >/dev/null 2>&1 || ! command -v dnsmasq >/dev/null 2>&1;
   exit 0
 fi
 
+wifi_supports_ap() {
+  local iface="$1"
+  local wiphy phy
+  wiphy="$(iw dev "${iface}" info 2>/dev/null | awk '$1 == "wiphy" { print $2; exit }')"
+  [ -n "${wiphy}" ] || return 1
+  phy="phy${wiphy}"
+  iw phy "${phy}" info 2>/dev/null | awk '
+    /Supported interface modes:/ { in_modes=1; next }
+    in_modes && /^\t \* AP$/ { found=1 }
+    in_modes && /^[^\t]/ { in_modes=0 }
+    END { exit found ? 0 : 1 }
+  '
+}
+
 detect_wifi_iface() {
   if [ -n "${WIFI_IFACE}" ] && ip link show "${WIFI_IFACE}" >/dev/null 2>&1; then
-    echo "${WIFI_IFACE}"
-    return 0
+    if wifi_supports_ap "${WIFI_IFACE}"; then
+      echo "${WIFI_IFACE}"
+      return 0
+    fi
+    echo "[RJD Setup AP] Requested interface ${WIFI_IFACE} does not advertise AP mode" >&2
+    return 1
   fi
 
   if command -v iw >/dev/null 2>&1; then
-    iw dev 2>/dev/null | awk '$1 == "Interface" { print $2; exit }'
-    return 0
+    local saw_wifi=0
+    while read -r candidate; do
+      [ -n "${candidate}" ] || continue
+      saw_wifi=1
+      if wifi_supports_ap "${candidate}"; then
+        echo "${candidate}"
+        return 0
+      fi
+      echo "[RJD Setup AP] Skipping ${candidate}: AP mode not advertised" >&2
+    done < <(iw dev 2>/dev/null | awk '$1 == "Interface" { print $2 }')
+    [ "${saw_wifi}" -eq 0 ] && echo "[RJD Setup AP] iw found no WiFi interfaces" >&2
+    return 1
   fi
 
-  ip -o link show | awk -F': ' '$2 ~ /^(wlan|wlx|ra|ap)/ { print $2; exit }'
+  ip -o link show | awk -F': ' '$2 ~ /^(wlan|wlx|wl|ra|ap)/ { print $2; exit }'
 }
 
 WIFI_IFACE="$(detect_wifi_iface || true)"
@@ -82,6 +111,13 @@ fi
 
 systemctl stop wpa_supplicant@${WIFI_IFACE}.service >/dev/null 2>&1 || true
 nmcli device set "${WIFI_IFACE}" managed no >/dev/null 2>&1 || true
+if [ -d /etc/NetworkManager/conf.d ]; then
+  cat > "${NM_UNMANAGED_CONF}" <<CONF
+[keyfile]
+unmanaged-devices=interface-name:${WIFI_IFACE}
+CONF
+  systemctl reload NetworkManager >/dev/null 2>&1 || true
+fi
 rfkill unblock wifi >/dev/null 2>&1 || true
 
 ip link set "${WIFI_IFACE}" up
@@ -92,8 +128,10 @@ cat > "${HOSTAPD_CONF}" <<CONF
 interface=${WIFI_IFACE}
 driver=nl80211
 ssid=${SETUP_SSID}
+country_code=${RJD_SETUP_AP_COUNTRY:-PH}
 hw_mode=g
 channel=${RJD_SETUP_AP_CHANNEL:-6}
+ieee80211n=1
 wmm_enabled=0
 macaddr_acl=0
 auth_algs=1
@@ -123,5 +161,20 @@ CONF
 dnsmasq --conf-file="${DNSMASQ_CONF}" --pid-file="${DNSMASQ_PID}"
 hostapd -B "${HOSTAPD_CONF}"
 
+sleep 2
+
+if ! pgrep -f "dnsmasq.*${DNSMASQ_PID}" >/dev/null 2>&1; then
+  echo "[RJD Setup AP] dnsmasq did not stay running"
+  journalctl -u dnsmasq -n 40 --no-pager 2>/dev/null || true
+  exit 1
+fi
+
+if ! pgrep -f "hostapd.*${HOSTAPD_CONF}" >/dev/null 2>&1; then
+  echo "[RJD Setup AP] hostapd did not stay running"
+  journalctl -u hostapd -n 40 --no-pager 2>/dev/null || true
+  exit 1
+fi
+
 echo "[RJD Setup AP] SSID '${SETUP_SSID}' is up on ${WIFI_IFACE}"
 echo "[RJD Setup AP] Setup URL: http://${SETUP_IP}/setup"
+ip -brief addr show "${WIFI_IFACE}" || true
