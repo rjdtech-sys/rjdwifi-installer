@@ -6942,29 +6942,14 @@ app.post('/api/bandwidth/settings', requireAdmin, async (req, res) => {
     // Re-apply QoS limits to all active devices when defaults change
     // This ensures that devices currently using the default limits get the new limits immediately
     try {
-      const activeDevices = await db.all('SELECT mac, ip FROM wifi_devices WHERE is_active = 1 AND ip IS NOT NULL');
-      const activeSessions = await db.all('SELECT mac, ip FROM sessions WHERE remaining_seconds > 0 AND ip IS NOT NULL');
-      
-      // Merge to avoid duplicates
-      const devicesToReapply = new Map();
-      activeDevices.forEach(d => { if(d.mac && d.ip) devicesToReapply.set(d.mac, d.ip); });
-      activeSessions.forEach(s => { if(s.mac && s.ip) devicesToReapply.set(s.mac, s.ip); });
-      
-      console.log(`[BANDWIDTH] Re-applying QoS for ${devicesToReapply.size} active devices after defaults changed to ${defaultDownloadLimit}M/${defaultUploadLimit}M`);
-      for (const [mac, ip] of devicesToReapply) {
-        // Update ALL active devices with new default limits and re-apply TC rules
-        // This ensures the new bandwidth defaults take effect immediately on all connected devices
-        const device = await db.get('SELECT download_limit, upload_limit FROM wifi_devices WHERE mac = ?', [mac]);
-        if (device) {
-          // Update device record with new defaults and re-apply TC rules
-          await db.run('UPDATE wifi_devices SET download_limit = ?, upload_limit = ? WHERE mac = ?', [defaultDownloadLimit, defaultUploadLimit, mac]);
-          await network.whitelistMAC(mac, ip);
-          console.log(`[BANDWIDTH] Re-applied ${defaultDownloadLimit}M/${defaultUploadLimit}M to ${mac} (${ip})`);
-        } else {
-          // No device record yet — just re-apply TC rules (whitelistMAC will use defaults from config)
-          await network.whitelistMAC(mac, ip);
-          console.log(`[BANDWIDTH] Applied defaults to unregistered device ${mac} (${ip})`);
-        }
+      const activeSessions = await db.all('SELECT mac, ip, download_limit, upload_limit FROM sessions WHERE remaining_seconds > 0 AND ip IS NOT NULL');
+      console.log(`[BANDWIDTH] Re-applying effective QoS for ${activeSessions.length} authorized sessions`);
+      for (const session of activeSessions) {
+        const device = await db.get('SELECT download_limit, upload_limit FROM wifi_devices WHERE mac = ?', [session.mac]);
+        const dl = device?.download_limit > 0 ? device.download_limit : (session.download_limit > 0 ? session.download_limit : defaultDownloadLimit);
+        const ul = device?.upload_limit > 0 ? device.upload_limit : (session.upload_limit > 0 ? session.upload_limit : defaultUploadLimit);
+        await network.setSpeedLimit(session.mac, session.ip, dl, ul);
+        console.log(`[BANDWIDTH] Effective limit ${dl}M/${ul}M applied to ${session.mac} (${session.ip})`);
       }
     } catch (e) {
       console.error('[BANDWIDTH] Failed to re-apply QoS to active devices:', e.message);
@@ -7693,7 +7678,7 @@ app.post('/api/devices/scan', requireAdmin, async (req, res) => {
     const now = Date.now();
     
     // Get current active sessions to sync with
-    const activeSessions = await db.all('SELECT mac, ip, remaining_seconds as remainingSeconds, total_paid as totalPaid, connected_at as connectedAt FROM sessions WHERE remaining_seconds > 0');
+    const activeSessions = await db.all('SELECT mac, ip, remaining_seconds as remainingSeconds, total_paid as totalPaid, connected_at as connectedAt, download_limit as sessionDownloadLimit, upload_limit as sessionUploadLimit FROM sessions WHERE remaining_seconds > 0');
     const sessionMap = new Map();
     activeSessions.forEach(session => {
       sessionMap.set(session.mac.toUpperCase(), session);
@@ -7760,6 +7745,8 @@ app.post('/api/devices/scan', requireAdmin, async (req, res) => {
     const formattedDevices = devices.map(device => {
       const deviceMac = device.mac.toUpperCase();
       const session = sessionMap.get(deviceMac);
+      const effectiveDl = device.download_limit > 0 ? device.download_limit : (session?.sessionDownloadLimit > 0 ? session.sessionDownloadLimit : defaultDl);
+      const effectiveUl = device.upload_limit > 0 ? device.upload_limit : (session?.sessionUploadLimit > 0 ? session.sessionUploadLimit : defaultUl);
       
       return {
         id: device.id || '',
@@ -7777,7 +7764,9 @@ app.post('/api/devices/scan', requireAdmin, async (req, res) => {
         sessionTime: session ? session.remainingSeconds : 0, // Real remaining time from session
         totalPaid: session ? session.totalPaid : 0,
         creditPesos: device.credit_pesos || 0,
-        creditMinutes: device.credit_minutes || 0
+        creditMinutes: device.credit_minutes || 0,
+        downloadLimit: effectiveDl,
+        uploadLimit: effectiveUl
       };
     });
     
@@ -7879,9 +7868,16 @@ app.put('/api/devices/:id', requireAdmin, async (req, res) => {
       }
     }
     
-    // Always reapply QoS limits if device is connected (whether time, download, or upload changed)
+    // Reapply shaping only for an authorized session. QoS changes must never authorize a client.
     if (updatedDevice.ip && updatedDevice.mac && (sessionTime !== undefined || downloadLimit !== undefined || uploadLimit !== undefined)) {
-      await network.whitelistMAC(updatedDevice.mac, updatedDevice.ip);
+      const activeSession = await db.get('SELECT download_limit, upload_limit FROM sessions WHERE mac = ? AND remaining_seconds > 0', [updatedDevice.mac]);
+      if (activeSession) {
+        const defaultDlRow = await db.get("SELECT value FROM config WHERE key = 'default_download_limit'");
+        const defaultUlRow = await db.get("SELECT value FROM config WHERE key = 'default_upload_limit'");
+        const dl = updatedDevice.download_limit > 0 ? updatedDevice.download_limit : (activeSession.download_limit > 0 ? activeSession.download_limit : parseInt(defaultDlRow?.value || '5', 10));
+        const ul = updatedDevice.upload_limit > 0 ? updatedDevice.upload_limit : (activeSession.upload_limit > 0 ? activeSession.upload_limit : parseInt(defaultUlRow?.value || '5', 10));
+        await network.setSpeedLimit(updatedDevice.mac, updatedDevice.ip, dl, ul);
+      }
     }
 
     res.json(updatedDevice);

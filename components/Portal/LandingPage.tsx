@@ -916,9 +916,9 @@ const LandingPage: React.FC<Props> = ({ rates, sessions, onSessionStart, refresh
           {creditPesos > 0 && (
             <button
               onClick={handleUseCredit}
-              className="portal-btn mt-3 bg-emerald-600 hover:bg-emerald-700"
+              className="portal-btn portal-btn-credit mt-3"
             >
-              Gamitin Credit
+              Use Credit
             </button>
           )}
           <button

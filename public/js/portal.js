@@ -640,7 +640,9 @@
     if (creditPesos > 0) {
       if (elements.loginCreditDisplay) elements.loginCreditDisplay.style.display = 'inline';
       if (elements.loginCreditPesos) elements.loginCreditPesos.textContent = creditPesos;
-      if (elements.btnUseCredit) elements.btnUseCredit.style.display = 'block';
+      if (elements.btnUseCredit) elements.btnUseCredit.style.display = 'flex';
+    } else if (elements.btnUseCredit) {
+      elements.btnUseCredit.style.display = 'none';
     }
 
     // Stop countdown

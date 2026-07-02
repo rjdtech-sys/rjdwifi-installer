@@ -62,11 +62,6 @@ const BandwidthManager: React.FC<Props> = ({ devices, rates }) => {
       });
       
       setMessage('Default bandwidth settings saved successfully!');
-      
-      // Apply to all existing devices if requested
-      if (autoApplyToNew) {
-        await applyToAllDevices();
-      }
     } catch (err: any) {
       setError(err.message || 'Failed to save bandwidth settings');
     } finally {
@@ -203,7 +198,7 @@ const BandwidthManager: React.FC<Props> = ({ devices, rates }) => {
           </label>
         </div>
 
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <button 
             onClick={handleSaveDefaults}
             disabled={loading}
