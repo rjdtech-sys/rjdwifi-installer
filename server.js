@@ -9559,7 +9559,38 @@ async function bootupRestore(isRestricted = false) {
 
   // 3. Restore Wireless APs
   try {
-    const wireless = await db.all('SELECT * FROM wireless_settings');
+    let wireless = await db.all('SELECT * FROM wireless_settings');
+    if (!wireless.length) {
+      const interfaces = await network.getInterfaces().catch(() => []);
+      const wifiInterfaces = interfaces.filter(iface => {
+        const name = String(iface.name || '').toLowerCase();
+        return iface.type === 'wifi' || name.startsWith('wlan') || name.startsWith('wl') || name.startsWith('ap') || name.startsWith('ra');
+      });
+
+      if (wifiInterfaces.length) {
+        const bridges = await db.all('SELECT * FROM bridges').catch(() => []);
+        const bridgeRows = bridges.map(row => {
+          let members = [];
+          try { members = JSON.parse(row.members || '[]'); } catch (e) {}
+          return { ...row, members: Array.isArray(members) ? members : [] };
+        });
+
+        for (const wifiIface of wifiInterfaces) {
+          const linkedBridge = bridgeRows.find(row => row.members.includes(wifiIface.name));
+          const bridgeName = linkedBridge ? linkedBridge.name : '';
+          const ssid = process.env.RJD_DEFAULT_AP_SSID || 'RJD_PisoWifi_Hotspot';
+          console.log(`[RJD] Wireless settings missing. Auto-creating AP config for ${wifiIface.name}${bridgeName ? ` on ${bridgeName}` : ''}.`);
+          await db.run(
+            'INSERT OR REPLACE INTO wireless_settings (interface, ssid, password, bridge) VALUES (?, ?, ?, ?)',
+            [wifiIface.name, ssid, '', bridgeName]
+          );
+        }
+        wireless = await db.all('SELECT * FROM wireless_settings');
+      } else {
+        console.warn('[RJD] No wireless_settings rows and no Wi-Fi interfaces detected. Skipping hostapd AP restore. If you expect an SSID, check USB Wi-Fi dongle/driver; current interfaces are: ' + interfaces.map(i => `${i.name}:${i.type}:${i.status}`).join(', '));
+      }
+    }
+
     for (const w of wireless) {
       console.log(`[RJD] Restoring Wi-Fi AP on ${w.interface}...`);
       await network.configureWifiAP(w).catch(e => console.error(`[RJD] AP Restore Failed: ${e.message}`));
