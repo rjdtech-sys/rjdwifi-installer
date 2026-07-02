@@ -2558,6 +2558,35 @@ async function tryRoamingAuthorize(mac, clientIp, sessionToken) {
   }
 }
 
+async function reconcileSynchronizedDevice(oldMac, newMac, newIp) {
+  if (!oldMac || !newMac || oldMac.toUpperCase() === newMac.toUpperCase()) return;
+  const row = await db.get('SELECT value FROM config WHERE key = ?', ['portal_config']).catch(() => null);
+  let portalConfig = {};
+  try { portalConfig = row?.value ? JSON.parse(row.value) : {}; } catch (e) {}
+  if (!portalConfig.macSyncEnabled || portalConfig.macSyncMode !== 'session_token_mac') return;
+
+  const oldDevice = await db.get('SELECT * FROM wifi_devices WHERE mac = ?', [oldMac]).catch(() => null);
+  const newDevice = await db.get('SELECT * FROM wifi_devices WHERE mac = ?', [newMac]).catch(() => null);
+  if (!oldDevice) return;
+
+  if (newDevice) {
+    await db.run(
+      `UPDATE wifi_devices
+       SET custom_name = CASE WHEN custom_name IS NULL OR custom_name = '' THEN ? ELSE custom_name END,
+           ip = COALESCE(?, ip), is_active = 1, last_seen = ?
+       WHERE mac = ?`,
+      [oldDevice.custom_name || '', newIp || null, Date.now(), newMac]
+    );
+    await db.run('DELETE FROM wifi_devices WHERE mac = ?', [oldMac]);
+  } else {
+    await db.run(
+      'UPDATE wifi_devices SET mac = ?, ip = COALESCE(?, ip), is_active = 1, last_seen = ? WHERE mac = ?',
+      [newMac, newIp || null, Date.now(), oldMac]
+    );
+  }
+  console.log(`[MAC-SYNC] Reconciled device ${oldMac} -> ${newMac}`);
+}
+
 // Check if a MAC belongs to a rental device with active session (bypass portal)
 async function isRentalDeviceActive(mac) {
   try {
@@ -3217,6 +3246,7 @@ app.get('/api/whoami', async (req, res) => {
             'INSERT INTO sessions (mac, ip, remaining_seconds, total_paid, connected_at, download_limit, upload_limit, token) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
             [mac, clientIp, (sessionByToken.remaining_seconds || 0) + extraTime, (sessionByToken.total_paid || 0) + extraPaid, sessionByToken.connected_at, sessionByToken.download_limit, sessionByToken.upload_limit, token]
           );
+          await reconcileSynchronizedDevice(sessionByToken.mac, mac, clientIp);
           await network.blockMAC(sessionByToken.mac, sessionByToken.ip);
           await network.whitelistMAC(mac, clientIp);
           try {
@@ -4171,6 +4201,7 @@ app.post('/api/sessions/restore', async (req, res) => {
       'INSERT INTO sessions (mac, ip, remaining_seconds, total_paid, connected_at, download_limit, upload_limit, token) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
       [mac, clientIp, session.remaining_seconds + extraTime, session.total_paid + extraPaid, session.connected_at, session.download_limit, session.upload_limit, token]
     );
+    await reconcileSynchronizedDevice(session.mac, mac, clientIp);
     
     // Switch whitelist
     await network.blockMAC(session.mac, session.ip); // Block old

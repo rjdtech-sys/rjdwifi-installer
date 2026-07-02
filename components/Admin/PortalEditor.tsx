@@ -734,6 +734,10 @@ const PortalEditor: React.FC = () => {
                     </p>
                   </div>
                   <button
+                    type="button"
+                    role="switch"
+                    aria-checked={config.macSyncEnabled}
+                    aria-label="Enable MAC synchronizer"
                     onClick={() => handleChange('macSyncEnabled', !config.macSyncEnabled)}
                     className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
                       config.macSyncEnabled ? 'bg-blue-600' : 'bg-slate-200'
@@ -749,6 +753,7 @@ const PortalEditor: React.FC = () => {
 
                 <div className={`grid grid-cols-1 sm:grid-cols-2 gap-3 ${config.macSyncEnabled ? '' : 'opacity-50 pointer-events-none'}`}>
                   <button
+                    type="button"
                     onClick={() => handleChange('macSyncMode', 'fingerprint_mac')}
                     className={`p-3 rounded-xl border text-left transition-all ${
                       config.macSyncMode === 'fingerprint_mac'
@@ -765,6 +770,7 @@ const PortalEditor: React.FC = () => {
                   </button>
 
                   <button
+                    type="button"
                     onClick={() => handleChange('macSyncMode', 'session_token_mac')}
                     className={`p-3 rounded-xl border text-left transition-all ${
                       config.macSyncMode === 'session_token_mac'
@@ -783,9 +789,10 @@ const PortalEditor: React.FC = () => {
 
                 <div className="mt-3 flex justify-end">
                   <button
+                    type="button"
                     onClick={handleSaveMacSync}
                     disabled={!macHasChanges}
-                    className="px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest border border-slate-200 bg-slate-900 text-white disabled:opacity-40"
+                    className="min-w-44 px-3 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest border border-slate-900 bg-slate-900 text-white disabled:border-slate-300 disabled:bg-slate-200 disabled:text-slate-600 disabled:opacity-100"
                   >
                     Save MAC Synchronizer
                   </button>
