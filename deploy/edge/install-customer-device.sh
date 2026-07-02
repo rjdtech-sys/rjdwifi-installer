@@ -44,7 +44,7 @@ apt-get update
 apt-get install -y \
   bridge-utils build-essential ca-certificates conntrack curl dnsmasq ffmpeg git hostapd \
   iproute2 iptables iputils-ping isc-dhcp-client iw libcap2-bin libffi-dev libsqlite3-dev \
-  libssl-dev libudev-dev net-tools pkg-config ppp pppoe psmisc python3 \
+  libssl-dev libudev-dev net-tools openssh-server pkg-config ppp pppoe psmisc python3 \
   python-is-python3 python3-dev python3-pip python3-setuptools python3-venv rfkill sqlite3 vlan wireless-regdb
 
 if [ "${BOARD}" = "x64_pc" ]; then
@@ -137,6 +137,33 @@ UNIT
   systemctl restart rjd-setup-ap.service >/dev/null 2>&1 || true
 }
 
+install_remote_ssh() {
+  echo "[RJD Edge] Ensuring SSH remote access service is enabled on port 22"
+  install -d /run/sshd
+
+  if [ -f /etc/ssh/sshd_config ]; then
+    if grep -qE '^[#[:space:]]*Port[[:space:]]+' /etc/ssh/sshd_config; then
+      sed -i 's/^[#[:space:]]*Port[[:space:]].*/Port 22/' /etc/ssh/sshd_config
+    else
+      printf '\nPort 22\n' >> /etc/ssh/sshd_config
+    fi
+
+    if grep -qE '^[#[:space:]]*ListenAddress[[:space:]]+' /etc/ssh/sshd_config; then
+      sed -i 's/^[#[:space:]]*ListenAddress[[:space:]].*/ListenAddress 0.0.0.0/' /etc/ssh/sshd_config
+    else
+      printf 'ListenAddress 0.0.0.0\n' >> /etc/ssh/sshd_config
+    fi
+  fi
+
+  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi active; then
+    ufw allow 22/tcp >/dev/null 2>&1 || true
+  fi
+
+  systemctl daemon-reload
+  systemctl enable ssh >/dev/null 2>&1 || systemctl enable sshd >/dev/null 2>&1 || true
+  systemctl restart ssh >/dev/null 2>&1 || systemctl restart sshd >/dev/null 2>&1 || true
+}
+
 if [ ! -d "${APP_DIR}/.git" ]; then
   git clone "${REPO_URL}" "${APP_DIR}"
 fi
@@ -167,6 +194,7 @@ if [ "${BOARD}" = "orange_pi" ]; then
 fi
 
 install_setup_ap_service
+install_remote_ssh
 
 pm2 delete rjd-pisowifi 2>/dev/null || true
 pm2 start server.js --name rjd-pisowifi
@@ -183,5 +211,6 @@ if [ -f "${APP_DIR}/scripts/rjd-wan-dhcp-wait.sh" ] && [ -f "${APP_DIR}/scripts/
 fi
 
 echo "[RJD Edge] Complete. Local setup gate: http://$(hostname -I | awk '{print $1}')/setup"
+echo "[RJD Edge] SSH enabled on port 22 for LAN/reachable routed networks. Use VPN/tunnel or router port-forwarding for off-network access."
 echo "[RJD Edge] Factory setup WiFi, when a USB WiFi adapter supports AP mode: SSID ${RJD_SETUP_AP_SSID:-RJD-Setup}, URL http://${RJD_SETUP_AP_IP:-10.0.0.1}/setup"
 echo "[RJD Edge] Diagnostics: sudo /opt/rjd-edge-installer/diagnose-clean-armbian.sh"

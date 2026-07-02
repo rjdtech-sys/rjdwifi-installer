@@ -12,34 +12,48 @@ if (!fs.existsSync(distDir)) {
 }
 
 console.log(`Downloading Tailwind CSS to ${dest}...`);
-const file = fs.createWriteStream(dest);
-https.get(url, function(response) {
-  if (response.statusCode !== 200) {
-      console.error(`Failed to download: ${response.statusCode}`);
-      if (response.statusCode === 302 || response.statusCode === 301) {
-          const newUrl = new URL(response.headers.location, url).toString();
-          console.log(`Redirecting to ${newUrl}...`);
-          https.get(newUrl, function(redirectResponse) {
-              redirectResponse.pipe(file);
-              file.on('finish', function() {
-                  file.close(() => {
-                      console.log('Download completed.');
-                      process.exit(0);
-                  });
-              });
-          });
+
+function download(downloadUrl, redirectsRemaining = 5) {
+  https.get(downloadUrl, function(response) {
+    const statusCode = response.statusCode || 0;
+
+    if ([301, 302, 303, 307, 308].includes(statusCode)) {
+      if (!response.headers.location || redirectsRemaining <= 0) {
+        console.error(`Failed to download: redirect limit reached (${statusCode})`);
+        process.exit(1);
       }
+
+      const redirectUrl = new URL(response.headers.location, downloadUrl).toString();
+      console.log(`Redirecting to ${redirectUrl}...`);
+      response.resume();
+      download(redirectUrl, redirectsRemaining - 1);
       return;
-  }
-  response.pipe(file);
-  file.on('finish', function() {
-    file.close(() => {
+    }
+
+    if (statusCode !== 200) {
+      response.resume();
+      console.error(`Failed to download: ${statusCode}`);
+      process.exit(1);
+    }
+
+    const file = fs.createWriteStream(dest);
+    response.pipe(file);
+    file.on('finish', function() {
+      file.close(() => {
         console.log('Download completed.');
         process.exit(0);
+      });
     });
+    file.on('error', function(err) {
+      fs.unlink(dest, () => {});
+      console.error('Error writing file:', err.message);
+      process.exit(1);
+    });
+  }).on('error', function(err) {
+    fs.unlink(dest, () => {});
+    console.error('Error downloading file:', err.message);
+    process.exit(1);
   });
-}).on('error', function(err) {
-  fs.unlink(dest, () => {});
-  console.error('Error downloading file:', err.message);
-  process.exit(1);
-});
+}
+
+download(url);

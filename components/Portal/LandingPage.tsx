@@ -757,7 +757,7 @@ const LandingPage: React.FC<Props> = ({ rates, sessions, onSessionStart, refresh
         />
       )}
 
-      <main className="relative z-20">
+      <main className="relative z-20 mx-auto flex w-full max-w-[540px] flex-col px-4 sm:px-6">
         <div className="portal-card">
           {activeMySession ? (
               <div className="mb-6 animate-in fade-in zoom-in duration-500">
@@ -942,7 +942,7 @@ const LandingPage: React.FC<Props> = ({ rates, sessions, onSessionStart, refresh
 
         {/* Free Internet Section */}
         {freeInternetConfig.enabled && freeInternetConfig.minutes > 0 && !activeMySession && (
-          <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-2xl shadow-xl border border-green-200 p-6 mb-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <div className="w-full bg-gradient-to-r from-green-50 to-emerald-50 rounded-2xl shadow-xl border border-green-200 p-6 mb-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <h3 className="text-lg font-bold text-green-800 mb-3 flex items-center gap-2">
               <span className="text-2xl">🎁</span> Free Internet Available!
             </h3>
@@ -992,7 +992,7 @@ const LandingPage: React.FC<Props> = ({ rates, sessions, onSessionStart, refresh
         />
       )}
 
-      <footer className="mt-12 text-center pb-10 flex flex-col items-center gap-4">
+      <footer className="mx-auto mt-12 w-full max-w-[540px] px-4 text-center pb-10 flex flex-col items-center gap-4">
         <p className="text-[9px] font-black uppercase tracking-[0.3em] text-slate-400 opacity-50">
           Powered by {config.title || 'PisoWifi System'}
         </p>

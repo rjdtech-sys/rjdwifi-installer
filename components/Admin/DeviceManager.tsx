@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { WifiDevice, UserSession } from '../../types';
+import { Rate, WifiDevice, UserSession } from '../../types';
 import { apiClient } from '../../lib/api';
 
 interface Props {
@@ -15,6 +15,7 @@ const DeviceManager: React.FC<Props> = ({ sessions = [], refreshSessions, refres
   const [showAddDevice, setShowAddDevice] = useState(false);
   const [refreshingDevices, setRefreshingDevices] = useState<Set<string>>(new Set());
   const [pausingDevices, setPausingDevices] = useState<Set<string>>(new Set());
+  const [pricingRates, setPricingRates] = useState<Rate[]>([]);
 
   // Edit Modal State
   const [editingDevice, setEditingDevice] = useState<WifiDevice | null>(null);
@@ -39,6 +40,7 @@ const DeviceManager: React.FC<Props> = ({ sessions = [], refreshSessions, refres
 
   useEffect(() => {
     fetchDevices();
+    fetchPricingRates();
 
     // Auto-refresh every 30 seconds
     const interval = setInterval(() => {
@@ -47,6 +49,92 @@ const DeviceManager: React.FC<Props> = ({ sessions = [], refreshSessions, refres
 
     return () => clearInterval(interval);
   }, []);
+
+  const fetchPricingRates = async () => {
+    try {
+      const rates = await apiClient.getRates();
+      setPricingRates(Array.isArray(rates) ? rates : []);
+    } catch (err) {
+      console.warn('Failed to fetch pricing rates for credit calculator', err);
+    }
+  };
+
+  const getSortedRates = () => {
+    return [...pricingRates]
+      .filter(rate => Number(rate.pesos) > 0 && Number(rate.minutes) > 0)
+      .sort((a, b) => Number(b.pesos) - Number(a.pesos));
+  };
+
+  const calculateMinutesFromPesos = (pesos: number) => {
+    if (!Number.isFinite(pesos) || pesos <= 0) return 0;
+
+    const rates = getSortedRates();
+    if (rates.length === 0) return 0;
+
+    let remainingPesos = pesos;
+    let totalMinutes = 0;
+
+    for (const rate of rates) {
+      const ratePesos = Number(rate.pesos);
+      const rateMinutes = Number(rate.minutes);
+      const times = Math.floor(remainingPesos / ratePesos);
+      if (times > 0) {
+        totalMinutes += times * rateMinutes;
+        remainingPesos -= times * ratePesos;
+      }
+    }
+
+    const smallestRate = rates[rates.length - 1];
+    if (remainingPesos > 0 && smallestRate) {
+      totalMinutes += Math.floor((remainingPesos / Number(smallestRate.pesos)) * Number(smallestRate.minutes));
+    }
+
+    return Math.max(0, Math.floor(totalMinutes));
+  };
+
+  const calculatePesosFromMinutes = (minutes: number) => {
+    if (!Number.isFinite(minutes) || minutes <= 0) return 0;
+
+    const rates = getSortedRates();
+    if (rates.length === 0) return 0;
+
+    let low = 0;
+    let high = Math.max(...rates.map(rate => Number(rate.pesos)), 1);
+
+    while (calculateMinutesFromPesos(high) < minutes) {
+      high *= 2;
+      if (high > 100000) break;
+    }
+
+    while (low < high) {
+      const mid = Math.floor((low + high) / 2);
+      if (calculateMinutesFromPesos(mid) >= minutes) {
+        high = mid;
+      } else {
+        low = mid + 1;
+      }
+    }
+
+    return low;
+  };
+
+  const updateCreditPesos = (value: string) => {
+    const pesos = Number(value);
+    setEditForm(prev => ({
+      ...prev,
+      creditPesos: value,
+      creditMinutes: value === '' ? '' : String(calculateMinutesFromPesos(pesos))
+    }));
+  };
+
+  const updateCreditMinutes = (value: string) => {
+    const minutes = Number(value);
+    setEditForm(prev => ({
+      ...prev,
+      creditMinutes: value,
+      creditPesos: value === '' ? '' : String(calculatePesosFromMinutes(minutes))
+    }));
+  };
 
   const fetchDevices = async () => {
     try {
@@ -167,8 +255,8 @@ const DeviceManager: React.FC<Props> = ({ sessions = [], refreshSessions, refres
       await apiClient.updateWifiDevice(editingDevice.id, {
         customName: editForm.customName,
         sessionTime: editForm.sessionTime ? Number(editForm.sessionTime) * 60 : undefined,
-        creditPesos: editForm.creditPesos ? Number(editForm.creditPesos) : undefined,
-        creditMinutes: editForm.creditMinutes ? Number(editForm.creditMinutes) : undefined,
+        creditPesos: editForm.creditPesos === '' ? 0 : Number(editForm.creditPesos),
+        creditMinutes: editForm.creditMinutes === '' ? 0 : Number(editForm.creditMinutes),
         downloadLimit: editForm.downloadLimit ? Number(editForm.downloadLimit) : 0,
         uploadLimit: editForm.uploadLimit ? Number(editForm.uploadLimit) : 0
       });
@@ -346,7 +434,7 @@ const DeviceManager: React.FC<Props> = ({ sessions = [], refreshSessions, refres
                   <input
                     type="number"
                     value={editForm.creditPesos}
-                    onChange={(e) => setEditForm({...editForm, creditPesos: e.target.value})}
+                    onChange={(e) => updateCreditPesos(e.target.value)}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-1 focus:ring-blue-500 outline-none"
                   />
                 </div>
@@ -355,11 +443,20 @@ const DeviceManager: React.FC<Props> = ({ sessions = [], refreshSessions, refres
                   <input
                     type="number"
                     value={editForm.creditMinutes}
-                    onChange={(e) => setEditForm({...editForm, creditMinutes: e.target.value})}
+                    onChange={(e) => updateCreditMinutes(e.target.value)}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-1 focus:ring-blue-500 outline-none"
                   />
                 </div>
               </div>
+              {pricingRates.length > 0 ? (
+                <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">
+                  Auto-calculated from Pricing tab rates.
+                </p>
+              ) : (
+                <p className="text-[9px] font-bold uppercase tracking-wider text-amber-500">
+                  No pricing rates found; credit conversion is disabled.
+                </p>
+              )}
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
