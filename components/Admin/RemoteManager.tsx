@@ -31,7 +31,41 @@ interface ZeroTierInstallState {
   lastUpdateAt: number | null;
 }
 
+interface SshStatus {
+  installed: boolean;
+  serviceRunning: boolean;
+  listeningOn22: boolean;
+  port: number;
+  lanIp: string | null;
+  error?: string | null;
+}
+
+interface TailscaleStatus {
+  installed: boolean;
+  serviceRunning: boolean;
+  version: string | null;
+  backendState: string | null;
+  online: boolean;
+  nodeName: string | null;
+  tailnetName: string | null;
+  tailscaleIps: string[];
+  loginUrl?: string | null;
+  error?: string | null;
+}
+
 const RemoteManager: React.FC = () => {
+  const [provider, setProvider] = useState<'tailscale' | 'zerotier'>('tailscale');
+  const [sshStatus, setSshStatus] = useState<SshStatus | null>(null);
+  const [sshBusy, setSshBusy] = useState<boolean>(false);
+  const [sshMessage, setSshMessage] = useState<string | null>(null);
+  const [sshError, setSshError] = useState<string | null>(null);
+
+  const [tailscaleStatus, setTailscaleStatus] = useState<TailscaleStatus | null>(null);
+  const [tailscaleAuthKey, setTailscaleAuthKey] = useState<string>('');
+  const [tailscaleBusy, setTailscaleBusy] = useState<boolean>(false);
+  const [tailscaleMessage, setTailscaleMessage] = useState<string | null>(null);
+  const [tailscaleError, setTailscaleError] = useState<string | null>(null);
+
   const [status, setStatus] = useState<ZeroTierStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState<boolean>(true);
   const [statusError, setStatusError] = useState<string | null>(null);
@@ -62,9 +96,86 @@ const RemoteManager: React.FC = () => {
   };
 
   useEffect(() => {
+    loadSshStatus();
+    loadTailscaleStatus();
     loadStatus();
     loadInstallState();
   }, []);
+
+  const loadSshStatus = async () => {
+    try {
+      const res = await fetch('/api/remote/ssh/status', {
+        headers: getAdminHeaders()
+      });
+      if (!res.ok) return;
+      setSshStatus(await res.json());
+    } catch (e) {
+      console.error('Failed to load SSH status', e);
+    }
+  };
+
+  const enableSsh = async () => {
+    setSshBusy(true);
+    setSshMessage(null);
+    setSshError(null);
+    try {
+      const res = await fetch('/api/remote/ssh/enable', {
+        method: 'POST',
+        headers: getAdminHeaders({ 'Content-Type': 'application/json' })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) {
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      setSshStatus(data.status);
+      setSshMessage(data.message || 'SSH enabled on port 22.');
+    } catch (e: any) {
+      setSshError(e?.message || 'Failed to enable SSH.');
+    } finally {
+      setSshBusy(false);
+    }
+  };
+
+  const loadTailscaleStatus = async () => {
+    try {
+      const res = await fetch('/api/tailscale/status', {
+        headers: getAdminHeaders()
+      });
+      if (!res.ok) return;
+      setTailscaleStatus(await res.json());
+    } catch (e) {
+      console.error('Failed to load Tailscale status', e);
+    }
+  };
+
+  const installTailscale = async () => {
+    setTailscaleBusy(true);
+    setTailscaleMessage(null);
+    setTailscaleError(null);
+    try {
+      const authKey = tailscaleAuthKey.trim();
+      if (authKey && !/^tskey-auth-[A-Za-z0-9_-]+$/.test(authKey)) {
+        throw new Error('Invalid Tailscale auth key format. Expected tskey-auth-...');
+      }
+
+      const res = await fetch('/api/tailscale/install', {
+        method: 'POST',
+        headers: getAdminHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ authKey })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) {
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      setTailscaleStatus(data.status);
+      setTailscaleMessage(data.message || 'Tailscale setup command completed.');
+      setTimeout(loadTailscaleStatus, 1500);
+    } catch (e: any) {
+      setTailscaleError(e?.message || 'Failed to setup Tailscale.');
+    } finally {
+      setTailscaleBusy(false);
+    }
+  };
 
   const loadStatus = async () => {
     setStatusLoading(true);
@@ -266,7 +377,7 @@ const RemoteManager: React.FC = () => {
   if (statusLoading && !effectiveStatus) {
     return (
       <div className="p-8 text-center text-slate-500">
-        Loading Remote / ZeroTier status...
+        Loading Remote Access status...
       </div>
     );
   }
@@ -277,7 +388,7 @@ const RemoteManager: React.FC = () => {
         <div>
           <h1 className="text-2xl font-black text-slate-800 tracking-tight uppercase">Remote Access</h1>
           <p className="text-slate-500 font-bold text-xs uppercase tracking-widest mt-1">
-            ZeroTier Manager, Installation, and Network Status
+            Enable SSH on port 22, then connect through Tailscale or ZeroTier
           </p>
         </div>
         <div className="flex flex-col items-end gap-2">
@@ -305,7 +416,220 @@ const RemoteManager: React.FC = () => {
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+        <div className="p-4 border-b border-slate-100 bg-slate-50/50 flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-black text-slate-800 uppercase tracking-widest">
+              SSH Port 22
+            </h2>
+            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-1">
+              Required for WinSCP/SFTP and normal SSH sessions
+            </p>
+          </div>
+          <button
+            onClick={loadSshStatus}
+            className="px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest border border-slate-200 text-slate-600 hover:bg-slate-50 active:scale-95 transition-all"
+          >
+            Refresh SSH
+          </button>
+        </div>
+        <div className="p-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div className="lg:col-span-2 grid grid-cols-2 md:grid-cols-4 gap-3 text-[10px] font-bold uppercase tracking-widest">
+            <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+              <div className="text-slate-400 mb-1">Installed</div>
+              <div className={`text-xs ${sshStatus?.installed ? 'text-green-600' : 'text-red-500'}`}>
+                {sshStatus?.installed ? 'Yes' : 'No'}
+              </div>
+            </div>
+            <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+              <div className="text-slate-400 mb-1">Service</div>
+              <div className={`text-xs ${sshStatus?.serviceRunning ? 'text-green-600' : 'text-amber-600'}`}>
+                {sshStatus?.serviceRunning ? 'Running' : 'Stopped'}
+              </div>
+            </div>
+            <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+              <div className="text-slate-400 mb-1">Port 22</div>
+              <div className={`text-xs ${sshStatus?.listeningOn22 ? 'text-green-600' : 'text-red-500'}`}>
+                {sshStatus?.listeningOn22 ? 'Listening' : 'Closed'}
+              </div>
+            </div>
+            <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+              <div className="text-slate-400 mb-1">LAN IP</div>
+              <div className="text-[10px] font-mono text-slate-800 break-all">
+                {sshStatus?.lanIp || '-'}
+              </div>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <button
+              onClick={enableSsh}
+              disabled={sshBusy}
+              className="w-full py-3 rounded-xl bg-blue-600 text-white text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 disabled:opacity-50 active:scale-95 transition-all"
+            >
+              {sshBusy ? 'Enabling SSH...' : 'Enable SSH 22'}
+            </button>
+            {sshStatus?.lanIp && (
+              <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 text-[10px] text-blue-700 font-bold uppercase tracking-widest">
+                WinSCP: SFTP / {sshStatus.lanIp} / Port 22
+              </div>
+            )}
+            {sshMessage && (
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-2 text-[10px] text-emerald-700 font-bold uppercase tracking-widest">
+                {sshMessage}
+              </div>
+            )}
+            {sshError && (
+              <div className="bg-red-50 border border-red-200 rounded-xl p-2 text-[10px] text-red-700 font-bold uppercase tracking-widest">
+                {sshError}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-slate-900 rounded-2xl p-2 flex flex-col sm:flex-row gap-2">
+        <button
+          onClick={() => setProvider('tailscale')}
+          className={`flex-1 rounded-xl py-3 text-[10px] font-black uppercase tracking-widest transition-all ${
+            provider === 'tailscale'
+              ? 'bg-white text-slate-900 shadow'
+              : 'text-slate-300 hover:bg-slate-800'
+          }`}
+        >
+          Option 1: Tailscale
+        </button>
+        <button
+          onClick={() => setProvider('zerotier')}
+          className={`flex-1 rounded-xl py-3 text-[10px] font-black uppercase tracking-widest transition-all ${
+            provider === 'zerotier'
+              ? 'bg-white text-slate-900 shadow'
+              : 'text-slate-300 hover:bg-slate-800'
+          }`}
+        >
+          Option 2: ZeroTier
+        </button>
+      </div>
+
+      {provider === 'tailscale' && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+            <div className="p-4 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-black text-slate-800 uppercase tracking-widest">
+                  Tailscale Status
+                </h2>
+                <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-1">
+                  Private VPN access for SSH and WinSCP without router port-forwarding
+                </p>
+              </div>
+              <button
+                onClick={loadTailscaleStatus}
+                className="px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest border border-slate-200 text-slate-600 hover:bg-slate-50 active:scale-95 transition-all"
+              >
+                Refresh
+              </button>
+            </div>
+            <div className="p-4 space-y-4">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-[10px] font-bold uppercase tracking-widest">
+                <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                  <div className="text-slate-400 mb-1">Installed</div>
+                  <div className={`text-xs ${tailscaleStatus?.installed ? 'text-green-600' : 'text-red-500'}`}>
+                    {tailscaleStatus?.installed ? 'Yes' : 'No'}
+                  </div>
+                </div>
+                <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                  <div className="text-slate-400 mb-1">Service</div>
+                  <div className={`text-xs ${tailscaleStatus?.serviceRunning ? 'text-green-600' : 'text-amber-600'}`}>
+                    {tailscaleStatus?.serviceRunning ? 'Running' : 'Stopped'}
+                  </div>
+                </div>
+                <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                  <div className="text-slate-400 mb-1">State</div>
+                  <div className={`text-xs ${tailscaleStatus?.online ? 'text-green-600' : 'text-slate-500'}`}>
+                    {tailscaleStatus?.backendState || 'Unknown'}
+                  </div>
+                </div>
+                <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                  <div className="text-slate-400 mb-1">Version</div>
+                  <div className="text-[10px] font-mono text-slate-800 break-all">
+                    {tailscaleStatus?.version || '-'}
+                  </div>
+                </div>
+              </div>
+              <div className="bg-slate-50 border border-slate-100 rounded-xl p-3 text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                <div className="mb-1">Tailscale IPs</div>
+                <div className="font-mono text-slate-800 normal-case">
+                  {tailscaleStatus?.tailscaleIps?.length ? tailscaleStatus.tailscaleIps.join(', ') : '-'}
+                </div>
+                {tailscaleStatus?.tailscaleIps?.[0] && (
+                  <div className="mt-2 text-blue-700">
+                    WinSCP: SFTP / {tailscaleStatus.tailscaleIps[0]} / Port 22
+                  </div>
+                )}
+              </div>
+              {tailscaleStatus?.loginUrl && (
+                <a
+                  href={tailscaleStatus.loginUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block bg-blue-50 border border-blue-200 rounded-xl p-3 text-[10px] text-blue-700 font-black uppercase tracking-widest hover:bg-blue-100"
+                >
+                  Open Tailscale Login URL
+                </a>
+              )}
+              {tailscaleStatus?.error && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[10px] text-amber-800 font-bold uppercase tracking-widest">
+                  {tailscaleStatus.error}
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+            <div className="p-4 border-b border-slate-100 bg-slate-50/50">
+              <h2 className="text-sm font-black text-slate-800 uppercase tracking-widest">
+                Setup Tailscale
+              </h2>
+              <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-1">
+                Paste an auth key for unattended setup, or leave blank to receive login URL
+              </p>
+            </div>
+            <div className="p-4 space-y-3">
+              <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest">
+                Auth Key (optional)
+              </label>
+              <input
+                type="password"
+                value={tailscaleAuthKey}
+                onChange={(e) => setTailscaleAuthKey(e.target.value)}
+                placeholder="tskey-auth-..."
+                className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[11px] font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <button
+                onClick={installTailscale}
+                disabled={tailscaleBusy}
+                className="w-full py-2.5 rounded-xl bg-blue-600 text-white text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 disabled:opacity-50 active:scale-95 transition-all"
+              >
+                {tailscaleBusy ? 'Setting Up...' : tailscaleStatus?.installed ? 'Run Tailscale Up' : 'Install Tailscale'}
+              </button>
+              <div className="text-[9px] text-slate-500 font-bold uppercase tracking-widest bg-slate-50 border border-dashed border-slate-200 rounded-xl p-2">
+                Best for remote work: install Tailscale on your Windows PC too, then use the Tailscale IP in WinSCP.
+              </div>
+              {tailscaleMessage && (
+                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-2 text-[10px] text-emerald-700 font-bold uppercase tracking-widest">
+                  {tailscaleMessage}
+                </div>
+              )}
+              {tailscaleError && (
+                <div className="bg-red-50 border border-red-200 rounded-xl p-2 text-[10px] text-red-700 font-bold uppercase tracking-widest">
+                  {tailscaleError}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {provider === 'zerotier' && <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* ZeroTier Status */}
         <div className="lg:col-span-2 space-y-4">
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
@@ -601,7 +925,7 @@ const RemoteManager: React.FC = () => {
             </div>
           </div>
         </div>
-      </div>
+      </div>}
     </div>
   );
 };

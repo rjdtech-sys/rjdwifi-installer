@@ -2178,6 +2178,177 @@ async function getZeroTierStatus() {
   return status;
 }
 
+function parseFirstIpv4(value) {
+  const text = (value || '').toString();
+  const match = text.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/);
+  return match ? match[0] : null;
+}
+
+async function getSshStatus() {
+  const status = {
+    installed: false,
+    serviceRunning: false,
+    listeningOn22: false,
+    port: 22,
+    lanIp: null,
+    error: null
+  };
+
+  try {
+    const { stdout } = await execPromise('command -v sshd || true');
+    status.installed = Boolean(stdout && stdout.trim());
+  } catch {}
+
+  try {
+    const { stdout } = await execPromise('systemctl is-active ssh 2>/dev/null || systemctl is-active sshd 2>/dev/null || true');
+    status.serviceRunning = stdout.trim() === 'active';
+  } catch {}
+
+  try {
+    const { stdout } = await execPromise('ss -tln 2>/dev/null | grep -E "[:.]22[[:space:]]" || true');
+    status.listeningOn22 = Boolean(stdout && stdout.trim());
+  } catch {}
+
+  try {
+    const { stdout } = await execPromise('hostname -I 2>/dev/null || true');
+    status.lanIp = parseFirstIpv4(stdout);
+  } catch {}
+
+  return status;
+}
+
+async function enableSshRemoteAccess() {
+  const commands = [
+    'apt-get update',
+    'apt-get install -y openssh-server',
+    'mkdir -p /run/sshd',
+    'if grep -qE "^[#[:space:]]*Port[[:space:]]+" /etc/ssh/sshd_config; then sed -i "s/^[#[:space:]]*Port[[:space:]].*/Port 22/" /etc/ssh/sshd_config; else printf "\\nPort 22\\n" >> /etc/ssh/sshd_config; fi',
+    'if grep -qE "^[#[:space:]]*ListenAddress[[:space:]]+" /etc/ssh/sshd_config; then sed -i "s/^[#[:space:]]*ListenAddress[[:space:]].*/ListenAddress 0.0.0.0/" /etc/ssh/sshd_config; else printf "ListenAddress 0.0.0.0\\n" >> /etc/ssh/sshd_config; fi',
+    'if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi active; then ufw allow 22/tcp >/dev/null 2>&1 || true; fi',
+    'systemctl daemon-reload',
+    'systemctl enable ssh >/dev/null 2>&1 || systemctl enable sshd >/dev/null 2>&1 || true',
+    'systemctl restart ssh >/dev/null 2>&1 || systemctl restart sshd >/dev/null 2>&1 || true'
+  ];
+
+  const output = [];
+  for (const command of commands) {
+    const { stdout, stderr } = await execPromise(command, { timeout: 120000 });
+    if (stdout && stdout.trim()) output.push(stdout.trim());
+    if (stderr && stderr.trim()) output.push(stderr.trim());
+  }
+
+  return {
+    status: await getSshStatus(),
+    output: output.slice(-20)
+  };
+}
+
+async function getTailscaleStatus() {
+  const status = {
+    installed: false,
+    serviceRunning: false,
+    version: null,
+    backendState: null,
+    online: false,
+    nodeName: null,
+    tailnetName: null,
+    tailscaleIps: [],
+    loginUrl: null,
+    error: null
+  };
+
+  try {
+    const { stdout } = await execPromise('command -v tailscale || true');
+    status.installed = Boolean(stdout && stdout.trim());
+  } catch {}
+
+  if (!status.installed) {
+    return status;
+  }
+
+  try {
+    const { stdout } = await execPromise('systemctl is-active tailscaled 2>/dev/null || true');
+    status.serviceRunning = stdout.trim() === 'active';
+  } catch {}
+
+  try {
+    const { stdout } = await execPromise('tailscale version 2>/dev/null | head -n 1 || true');
+    status.version = stdout.trim() || null;
+  } catch {}
+
+  try {
+    const { stdout } = await execPromise('tailscale status --json', { timeout: 10000 });
+    const data = JSON.parse(stdout);
+    status.backendState = data.BackendState || null;
+    status.online = data.BackendState === 'Running';
+    status.nodeName = data.Self?.HostName || data.Self?.DNSName || null;
+    status.tailnetName = data.CurrentTailnet?.Name || data.CurrentTailnet?.MagicDNSSuffix || null;
+    const ips = Array.isArray(data.Self?.TailscaleIPs) ? data.Self.TailscaleIPs : [];
+    status.tailscaleIps = ips.map(String);
+  } catch (e) {
+    const stderr = e && e.stderr ? String(e.stderr) : '';
+    const stdout = e && e.stdout ? String(e.stdout) : '';
+    const message = stderr || stdout || e.message || '';
+    status.error = message.trim() || null;
+    const urlMatch = message.match(/https:\/\/login\.tailscale\.com\/[^\s]+/);
+    if (urlMatch) status.loginUrl = urlMatch[0];
+  }
+
+  if (status.tailscaleIps.length === 0) {
+    try {
+      const { stdout } = await execPromise('tailscale ip 2>/dev/null || true');
+      status.tailscaleIps = stdout.split(/\s+/).map(s => s.trim()).filter(Boolean);
+    } catch {}
+  }
+
+  return status;
+}
+
+async function installTailscaleRemoteAccess(authKey) {
+  const output = [];
+  const current = await getTailscaleStatus();
+
+  if (!current.installed) {
+    const install = await execPromise('curl -fsSL https://tailscale.com/install.sh | sh', { timeout: 180000 });
+    if (install.stdout && install.stdout.trim()) output.push(install.stdout.trim());
+    if (install.stderr && install.stderr.trim()) output.push(install.stderr.trim());
+  }
+
+  await execPromise('systemctl enable --now tailscaled', { timeout: 30000 }).catch(async () => {
+    await execPromise('systemctl restart tailscaled', { timeout: 30000 });
+  });
+
+  let loginUrl = null;
+  if (authKey) {
+    const up = await execPromise('tailscale up --authkey "$TS_AUTHKEY" --ssh --accept-routes', {
+      timeout: 120000,
+      env: { ...process.env, TS_AUTHKEY: authKey }
+    });
+    if (up.stdout && up.stdout.trim()) output.push(up.stdout.trim());
+    if (up.stderr && up.stderr.trim()) output.push(up.stderr.trim());
+  } else {
+    try {
+      const up = await execPromise('tailscale up --ssh --accept-routes', { timeout: 30000 });
+      if (up.stdout && up.stdout.trim()) output.push(up.stdout.trim());
+      if (up.stderr && up.stderr.trim()) output.push(up.stderr.trim());
+    } catch (e) {
+      const text = `${e.stdout || ''}\n${e.stderr || ''}\n${e.message || ''}`;
+      const match = text.match(/https:\/\/login\.tailscale\.com\/[^\s]+/);
+      if (match) loginUrl = match[0];
+      if (text.trim()) output.push(text.trim());
+    }
+  }
+
+  await execPromise('tailscale set --ssh', { timeout: 30000 }).catch(() => {});
+  const status = await getTailscaleStatus();
+  if (loginUrl && !status.loginUrl) status.loginUrl = loginUrl;
+
+  return {
+    status,
+    output: output.slice(-20)
+  };
+}
+
 // Initialize license manager (will use env variables if available)
 const licenseManager = initializeLicenseManager();
 const setupCloudClient = new CloudLicenseClient();
@@ -6640,6 +6811,58 @@ app.delete('/api/network/bridge/:name', requireAdmin, async (req, res) => {
 });
 
 // ZEROTIER API
+app.get('/api/remote/ssh/status', requireAdmin, async (req, res) => {
+  try {
+    res.json(await getSshStatus());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/remote/ssh/enable', requireAdmin, async (req, res) => {
+  try {
+    const result = await enableSshRemoteAccess();
+    res.json({
+      success: true,
+      message: 'SSH enabled on port 22',
+      ...result
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/tailscale/status', requireAdmin, async (req, res) => {
+  try {
+    res.json(await getTailscaleStatus());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/tailscale/install', requireAdmin, async (req, res) => {
+  try {
+    const authKey = req.body && typeof req.body.authKey === 'string'
+      ? req.body.authKey.trim()
+      : '';
+
+    if (authKey && !/^tskey-auth-[A-Za-z0-9_-]+$/.test(authKey)) {
+      return res.status(400).json({ error: 'Invalid Tailscale auth key format. Expected tskey-auth-...' });
+    }
+
+    const result = await installTailscaleRemoteAccess(authKey || null);
+    res.json({
+      success: true,
+      message: authKey
+        ? 'Tailscale installed and authenticated'
+        : 'Tailscale installed. Open the login URL to authenticate if shown.',
+      ...result
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/zerotier/status', requireAdmin, async (req, res) => {
   try {
     const status = await getZeroTierStatus();
