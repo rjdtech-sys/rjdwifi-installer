@@ -792,7 +792,7 @@ const PortalEditor: React.FC = () => {
                     type="button"
                     onClick={handleSaveMacSync}
                     disabled={!macHasChanges}
-                    className="min-w-44 px-3 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest border border-slate-900 bg-slate-900 text-white disabled:border-slate-300 disabled:bg-slate-200 disabled:text-slate-600 disabled:opacity-100"
+                    className="rjd-save-button px-3 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest"
                   >
                     Save MAC Synchronizer
                   </button>
@@ -1072,7 +1072,7 @@ const PortalEditor: React.FC = () => {
               <button
                 onClick={handleSaveCentralPortal}
                 disabled={!centralPortalDirty}
-                className="px-4 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest bg-slate-900 text-white disabled:opacity-40"
+                className="rjd-save-button px-4 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest"
               >
                 Save Central Portal
               </button>

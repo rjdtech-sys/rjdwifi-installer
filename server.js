@@ -308,7 +308,7 @@ setInterval(cleanupExpiredCoinSlotLocks, 30_000).unref?.();
 // Configure Multer for Audio Uploads
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
-    const dir = 'uploads/audio/';
+    const dir = path.join(__dirname, 'uploads', 'audio');
     if (!fs.existsSync(dir)){
         fs.mkdirSync(dir, { recursive: true });
     }
@@ -463,11 +463,21 @@ async function pushNodeMCUPinsToDevice(device, { coinPinGpio, relayPinGpio }) {
 app.use(express.json());
 
 // File upload middleware
-app.use(fileUpload({
+const expressFileUpload = fileUpload({
   limits: { fileSize: 30 * 1024 * 1024 }, // 30MB max (for GIF files)
   abortOnLimit: true,
   createParentPath: true
-}));
+});
+const multerUploadPaths = [
+  /^\/api\/admin\/upload-audio$/,
+  /^\/api\/nodemcu\/[^/]+\/update$/,
+  /^\/api\/system\/(restore|update)$/,
+  /^\/api\/phone-rental\/app-update\/upload$/
+];
+app.use((req, res, next) => {
+  if (req.method === 'POST' && multerUploadPaths.some(pattern => pattern.test(req.path))) return next();
+  return expressFileUpload(req, res, next);
+});
 
 // Prevent caching of API responses
 app.use((req, res, next) => {
@@ -2444,15 +2454,11 @@ app.use(async (req, res, next) => {
 });
 
 // AUDIO UPLOAD ENDPOINT
-app.post('/api/admin/upload-audio', requireAdmin, upload.single('audio'), (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ error: 'No file uploaded' });
-  }
-  // Return web-accessible path
-  const webPath = '/uploads/audio/' + req.file.filename;
-  res.json({
-    success: true,
-    path: webPath
+app.post('/api/admin/upload-audio', requireAdmin, (req, res) => {
+  upload.single('audio')(req, res, err => {
+    if (err) return res.status(400).json({ success: false, error: err.message || 'Audio upload failed' });
+    if (!req.file) return res.status(400).json({ success: false, error: 'No audio file uploaded' });
+    res.json({ success: true, path: '/uploads/audio/' + req.file.filename });
   });
 });
 
@@ -7842,7 +7848,7 @@ app.delete('/api/devices/:id', requireAdmin, async (req, res) => {
 });
 
 // CRITICAL FIX: Delete all inactive devices (no session time)
-app.delete('/api/devices/inactive', requireAdmin, async (req, res) => {
+app.delete('/api/devices/actions/delete-inactive', requireAdmin, async (req, res) => {
   try {
     // Delete devices that have:
     // - No active session (sessionTime <= 0 or NULL)

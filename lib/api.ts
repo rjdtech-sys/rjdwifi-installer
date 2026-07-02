@@ -480,7 +480,7 @@ export const apiClient = {
   },
 
   async deleteInactiveWifiDevices(): Promise<{ count: number }> {
-    const res = await fetch(`${API_BASE}/devices/inactive`, {
+    const res = await fetch(`${API_BASE}/devices/actions/delete-inactive`, {
       method: 'DELETE',
       headers: getHeaders()
     });

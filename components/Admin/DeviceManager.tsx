@@ -180,11 +180,16 @@ const DeviceManager: React.FC<Props> = ({ sessions = [], refreshSessions, refres
     }
   };
 
-  const handleDelete = async (deviceId: string) => {
+  const handleDelete = async (device: WifiDevice) => {
+    const isOnline = device.isOnline ?? ((Date.now() - (device.lastSeen || 0)) < 90000);
+    if (isOnline) {
+      alert('This device is currently connected and will be rediscovered automatically. Disconnect it from the hotspot before deleting its record.');
+      return;
+    }
     if (!confirm('Are you sure you want to delete this device?')) return;
 
     try {
-      await apiClient.deleteWifiDevice(deviceId);
+      await apiClient.deleteWifiDevice(device.id);
       fetchDevices();
     } catch (err) {
       alert(`Failed to delete device: ${err instanceof Error ? err.message : 'Unknown error'}`);
@@ -198,9 +203,9 @@ const DeviceManager: React.FC<Props> = ({ sessions = [], refreshSessions, refres
       const hasSessionTime = (liveSession?.remainingSeconds || device.sessionTime || 0) > 0;
       const hasCreditPesos = (device.creditPesos || 0) > 0;
       const hasCreditMinutes = (device.creditMinutes || 0) > 0;
-      const isActive = device.isActive === 1;
+      const isOnline = device.isOnline ?? ((Date.now() - (device.lastSeen || 0)) < 90000);
       
-      return !hasSessionTime && !hasCreditPesos && !hasCreditMinutes && !isActive;
+      return !hasSessionTime && !hasCreditPesos && !hasCreditMinutes && !isOnline;
     });
 
     if (inactiveDevices.length === 0) {
@@ -629,7 +634,7 @@ const DeviceManager: React.FC<Props> = ({ sessions = [], refreshSessions, refres
 
                       {/* Delete */}
                       <button
-                        onClick={() => handleDelete(device.id)}
+                        onClick={() => handleDelete(device)}
                         className="p-1.5 hover:bg-red-50 text-red-600 rounded-md transition-colors"
                         title="Delete"
                       >
