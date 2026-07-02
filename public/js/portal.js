@@ -10,6 +10,17 @@
   const API_BASE = '/api';
   const POLL_INTERVAL = 5000;
 
+  function getClientIdentity() {
+    let identity = localStorage.getItem('rjd_client_identity') || '';
+    if (!identity) {
+      identity = self.crypto && typeof self.crypto.randomUUID === 'function'
+        ? self.crypto.randomUUID()
+        : `rjd-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      localStorage.setItem('rjd_client_identity', identity);
+    }
+    return identity;
+  }
+
   // ─── State ───
   let currentSession = null;
   let pollTimer = null;
@@ -161,7 +172,10 @@
     try {
       const response = await fetch(`${API_BASE}/whoami`, {
         method: 'GET',
-        headers: { 'Content-Type': 'application/json' }
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RJD-Client-ID': getClientIdentity()
+        }
       });
 
       if (!response.ok) return null;

@@ -782,7 +782,7 @@ const PortalEditor: React.FC = () => {
                       Session ID + MAC
                     </div>
                     <p className="text-[9px] text-slate-400 font-bold leading-snug">
-                      Uses session token together with device MAC for session synchronization.
+                      Uses a persistent browser ID and session token to reconcile randomized MAC addresses.
                     </p>
                   </button>
                 </div>

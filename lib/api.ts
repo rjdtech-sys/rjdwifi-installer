@@ -3,6 +3,18 @@ import { Rate, NetworkInterface, SystemConfig, WanConfig, VlanConfig, WanInterfa
 
 const API_BASE = '/api';
 
+const getClientIdentity = () => {
+  if (typeof localStorage === 'undefined') return '';
+  let identity = localStorage.getItem('rjd_client_identity') || '';
+  if (!identity) {
+    identity = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `rjd-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    localStorage.setItem('rjd_client_identity', identity);
+  }
+  return identity;
+};
+
 const getHeaders = (customHeaders: HeadersInit = {}) => {
   const headers: Record<string, string> = { 
     'Content-Type': 'application/json',
@@ -18,6 +30,8 @@ const getHeaders = (customHeaders: HeadersInit = {}) => {
   if (userToken) {
     headers['X-Session-Token'] = userToken;
   }
+  const clientIdentity = getClientIdentity();
+  if (clientIdentity) headers['X-RJD-Client-ID'] = clientIdentity;
   return headers;
 };
 

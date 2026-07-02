@@ -2613,6 +2613,32 @@ async function reconcileSynchronizedDevice(oldMac, newMac, newIp) {
   console.log(`[MAC-SYNC] Reconciled device ${oldMac} -> ${newMac}`);
 }
 
+async function reconcileBrowserIdentity(req, mac, clientIp) {
+  const identity = String(req.headers['x-rjd-client-id'] || '').trim();
+  if (!mac || !/^[a-zA-Z0-9_-]{16,128}$/.test(identity)) return;
+
+  const portalRow = await db.get('SELECT value FROM config WHERE key = ?', ['portal_config']).catch(() => null);
+  let portalConfig = {};
+  try { portalConfig = portalRow?.value ? JSON.parse(portalRow.value) : {}; } catch (e) {}
+  if (!portalConfig.macSyncEnabled) return;
+
+  const mapRow = await db.get('SELECT value FROM config WHERE key = ?', ['mac_sync_identities']).catch(() => null);
+  let identities = {};
+  try { identities = mapRow?.value ? JSON.parse(mapRow.value) : {}; } catch (e) {}
+
+  const previous = identities[identity];
+  if (previous?.mac && previous.mac.toUpperCase() !== mac.toUpperCase()) {
+    await reconcileSynchronizedDevice(previous.mac, mac, clientIp);
+  }
+
+  identities[identity] = { mac, lastSeen: Date.now() };
+  const cutoff = Date.now() - (90 * 24 * 60 * 60 * 1000);
+  for (const [key, value] of Object.entries(identities)) {
+    if (!value || Number(value.lastSeen || 0) < cutoff) delete identities[key];
+  }
+  await db.run('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)', ['mac_sync_identities', JSON.stringify(identities)]);
+}
+
 // Check if a MAC belongs to a rental device with active session (bypass portal)
 async function isRentalDeviceActive(mac) {
   try {
@@ -3067,6 +3093,7 @@ app.use(async (req, res, next) => {
 app.get('/api/whoami', async (req, res) => {
   const clientIp = req.ip ? req.ip.replace('::ffff:', '') : '';
   const mac = await getMacFromIp(clientIp);
+  await reconcileBrowserIdentity(req, mac, clientIp).catch(err => console.error('[MAC-SYNC] Browser identity error:', err.message));
   
   let isRevoked = false;
   let canOperate = true;
