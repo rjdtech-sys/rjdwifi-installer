@@ -73,6 +73,8 @@ mkdir -p /etc/hostapd /etc/dnsmasq.d /run
 
 systemctl stop hostapd >/dev/null 2>&1 || true
 killall hostapd >/dev/null 2>&1 || true
+systemctl stop dnsmasq >/dev/null 2>&1 || true
+killall dnsmasq >/dev/null 2>&1 || true
 if [ -f "${DNSMASQ_PID}" ]; then
   kill "$(cat "${DNSMASQ_PID}")" >/dev/null 2>&1 || true
   rm -f "${DNSMASQ_PID}"
