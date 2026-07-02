@@ -153,6 +153,8 @@ bind-dynamic
 dhcp-range=${SETUP_DHCP_RANGE}
 dhcp-option=3,${SETUP_IP}
 dhcp-option=6,${SETUP_IP}
+dhcp-option=114,http://${SETUP_IP}/api/captive-portal
+dhcp-option=160,http://${SETUP_IP}/
 dhcp-authoritative
 address=/#/${SETUP_IP}
 log-dhcp

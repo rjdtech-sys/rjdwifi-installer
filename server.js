@@ -2520,6 +2520,26 @@ app.get('/success', (req, res) => {
   `);
 });
 
+app.get('/api/captive-portal', async (req, res) => {
+  const clientIp = getClientIpV4(req);
+  const mac = clientIp ? await getMacFromIp(clientIp) : null;
+  let captive = true;
+  if (mac) {
+    const session = await db.get(
+      'SELECT 1 FROM sessions WHERE mac = ? AND remaining_seconds > 0 AND (is_paused = 0 OR is_paused IS NULL)',
+      [mac]
+    ).catch(() => null);
+    captive = !session;
+  }
+
+  res.set('Cache-Control', 'no-store');
+  res.type('application/captive+json').json({
+    captive,
+    'user-portal-url': 'http://10.0.0.1/',
+    ...(captive ? {} : { 'seconds-remaining': 0 })
+  });
+});
+
 async function tryRoamingAuthorize(mac, clientIp, sessionToken) {
   try {
     if (!mac || !clientIp) return false;
