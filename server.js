@@ -1303,6 +1303,71 @@ async function getLocalSetupState() {
   };
 }
 
+function readKeyValueConfig(filePath) {
+  if (!fs.existsSync(filePath)) return {};
+  return fs.readFileSync(filePath, 'utf8').split(/\r?\n/).reduce((values, line) => {
+    const match = line.match(/^([^#=]+)=(.*)$/);
+    if (match) values[match[1].trim()] = match[2].trim();
+    return values;
+  }, {});
+}
+
+function persistNetworkRestoreEnabled() {
+  const envFiles = [
+    path.join(__dirname, '.env'),
+    '/etc/rjd-edge.env',
+    '/boot/rjd-edge.env',
+    '/boot/firmware/rjd-edge.env'
+  ];
+
+  for (const envFile of envFiles) {
+    if (!fs.existsSync(envFile)) continue;
+    const current = fs.readFileSync(envFile, 'utf8');
+    const next = /^RJD_SKIP_NETWORK_RESTORE=/m.test(current)
+      ? current.replace(/^RJD_SKIP_NETWORK_RESTORE=.*$/m, 'RJD_SKIP_NETWORK_RESTORE=false')
+      : `${current.replace(/\s*$/, '\n')}RJD_SKIP_NETWORK_RESTORE=false\n`;
+    fs.writeFileSync(envFile, next);
+  }
+  process.env.RJD_SKIP_NETWORK_RESTORE = 'false';
+}
+
+async function promoteFactorySetupAp() {
+  const setupConfigPath = '/etc/hostapd/rjd-setup-ap.conf';
+  const setupConfig = readKeyValueConfig(setupConfigPath);
+  const interfaceName = setupConfig.interface;
+  if (!interfaceName || !/^[a-zA-Z0-9_.-]+$/.test(interfaceName)) {
+    console.log('[Setup] No factory AP interface found; normal network restore enabled for next boot.');
+    persistNetworkRestoreEnabled();
+    return;
+  }
+
+  const setupIp = process.env.RJD_SETUP_AP_IP || '10.0.0.1';
+  const rangeParts = String(process.env.RJD_SETUP_AP_DHCP_RANGE || '10.0.0.50,10.0.0.250').split(',');
+  const dhcpRange = `${rangeParts[0]},${rangeParts[1]}`;
+  const ssid = setupConfig.ssid || process.env.RJD_SETUP_AP_SSID || 'RJD-Setup';
+  const password = setupConfig.wpa_passphrase || process.env.RJD_SETUP_AP_PASSWORD || '';
+
+  persistNetworkRestoreEnabled();
+  await db.run(
+    'INSERT OR REPLACE INTO hotspots (interface, ip_address, dhcp_range, bandwidth_limit, enabled) VALUES (?, ?, ?, ?, 1)',
+    [interfaceName, setupIp, dhcpRange, 0]
+  );
+  await db.run(
+    'INSERT OR REPLACE INTO wireless_settings (interface, ssid, password, bridge) VALUES (?, ?, ?, ?)',
+    [interfaceName, ssid, password, '']
+  );
+
+  await execPromise('systemctl disable --now rjd-setup-ap.service').catch(() => {});
+  for (const staleConfig of [setupConfigPath, '/etc/dnsmasq.d/rjd-setup-ap.conf']) {
+    try { if (fs.existsSync(staleConfig)) fs.unlinkSync(staleConfig); } catch (e) {}
+  }
+
+  await network.setupHotspot({ interface: interfaceName, ip_address: setupIp, dhcp_range: dhcpRange }, true);
+  await network.configureWifiAP({ interface: interfaceName, ssid, password, bridge: '' });
+  await network.restartDnsmasq();
+  console.log(`[Setup] Factory AP promoted to permanent hotspot on ${interfaceName}.`);
+}
+
 // SETUP GATE AND WIZARD API
 app.get('/setup/check', async (req, res) => {
   try {
@@ -1420,6 +1485,9 @@ app.post('/setup/password', async (req, res) => {
     );
     await db.run('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)', ['setup_complete', 'true']);
     res.json({ success: true, message: 'Local administrator password updated' });
+    setTimeout(() => {
+      promoteFactorySetupAp().catch(err => console.error('[Setup] Factory AP promotion failed:', err.message));
+    }, 750);
   } catch (err) {
     console.error('[Setup] Password update failed:', err);
     res.status(500).json({ success: false, error: err.message });
@@ -9636,7 +9704,15 @@ function startBackgroundTimers() {
 
   // Voucher APIs and Timers moved to top level
 
-  const skipNetworkRestore = String(process.env.RJD_SKIP_NETWORK_RESTORE || '').toLowerCase() === 'true';
+  let skipNetworkRestore = String(process.env.RJD_SKIP_NETWORK_RESTORE || '').toLowerCase() === 'true';
+  if (skipNetworkRestore) {
+    const completedSetup = await db.get('SELECT value FROM config WHERE key = ?', ['setup_complete']).catch(() => null);
+    if (completedSetup?.value === 'true') {
+      console.log('[RJD] Completed setup detected in factory network mode; promoting setup AP.');
+      await promoteFactorySetupAp().catch(err => console.error('[RJD] Factory AP startup promotion failed:', err.message));
+      skipNetworkRestore = String(process.env.RJD_SKIP_NETWORK_RESTORE || '').toLowerCase() === 'true';
+    }
+  }
   if (skipNetworkRestore) {
     console.warn('[RJD] RJD_SKIP_NETWORK_RESTORE=true — skipping boot restore, WAN watchdog, and startup rental cloud sync.');
   } else {

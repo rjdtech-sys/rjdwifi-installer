@@ -23,6 +23,17 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
+# Keep one authoritative installation path. The edge installer also provisions
+# the setup AP, persists board/token configuration, and installs diagnostics.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+EDGE_INSTALLER="${SCRIPT_DIR}/deploy/edge/install-customer-device.sh"
+if [ -x "${EDGE_INSTALLER}" ]; then
+    exec "${EDGE_INSTALLER}" "$@"
+fi
+
+echo -e "${RED}Missing maintained edge installer: ${EDGE_INSTALLER}${NC}"
+exit 1
+
 echo -e "${GREEN}[1/8] Detecting Hardware Architecture...${NC}"
 ARCH=$(uname -m)
 BOARD="unknown"
