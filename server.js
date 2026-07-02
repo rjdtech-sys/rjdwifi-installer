@@ -301,6 +301,16 @@ function getDefaultRelayPinForBoard(boardType, boardModel) {
   return null;
 }
 
+function normalizeClientSessionRow(row) {
+  if (!row) return null;
+  return {
+    ...row,
+    remainingSeconds: Number(row.remainingSeconds ?? row.remaining_seconds ?? 0),
+    isPaused: row.isPaused === 1 || row.isPaused === true,
+    isPausable: row.isPausable
+  };
+}
+
 function cleanupExpiredCoinSlotLocks() {
   const now = Date.now();
   for (const [slot, lock] of coinSlotLocks.entries()) {
@@ -2560,11 +2570,7 @@ async function getSessionByTokenForClient(token) {
   );
 
   if (!row) return null;
-  return {
-    ...row,
-    isPaused: row.isPaused === 1 || row.isPaused === true,
-    isPausable: row.isPausable
-  };
+  return normalizeClientSessionRow(row);
 }
 
 // Initialize license manager (will use env variables if available)
@@ -2935,11 +2941,20 @@ async function tryRoamingAuthorize(mac, clientIp, sessionToken) {
     if (!edgeSync || !edgeSync.vendorId) return false;
 
     // CRITICAL: Never re-whitelist a device with an expired session
-    // But skip this check if the device has an active session (just inserted coin)
+    // But skip this check if the device has an active unpaused session (just inserted coin)
     const activeSession = await db.get(
-      'SELECT mac FROM sessions WHERE mac = ? AND remaining_seconds > 0',
+      'SELECT mac FROM sessions WHERE mac = ? AND remaining_seconds > 0 AND (is_paused = 0 OR is_paused IS NULL)',
       [mac]
     );
+    const pausedSession = await db.get(
+      'SELECT mac FROM sessions WHERE mac = ? AND remaining_seconds > 0 AND is_paused = 1',
+      [mac]
+    );
+    if (pausedSession) {
+      console.log(`[AUTH] Roaming DENIED: ${mac} session is paused — keeping blocked`);
+      await network.blockMAC(mac, clientIp).catch(() => {});
+      return false;
+    }
     if (!activeSession) {
       const expiredSession = await db.get(
         'SELECT mac FROM sessions WHERE mac = ? AND remaining_seconds <= 0',
@@ -3050,12 +3065,21 @@ async function isRentalDeviceActive(mac) {
 async function checkAndBlockExpired(mac, clientIp) {
   if (!mac) return false;
   try {
-    // First check: does the device have an active session? If yes, do NOT block.
+    // First check: does the device have an active unpaused session? If yes, do NOT block.
     const activeSession = await db.get(
-      'SELECT mac FROM sessions WHERE mac = ? AND remaining_seconds > 0',
+      'SELECT mac FROM sessions WHERE mac = ? AND remaining_seconds > 0 AND (is_paused = 0 OR is_paused IS NULL)',
       [mac]
     );
     if (activeSession) return false;
+
+    const pausedSession = await db.get(
+      'SELECT mac, ip FROM sessions WHERE mac = ? AND remaining_seconds > 0 AND is_paused = 1',
+      [mac]
+    );
+    if (pausedSession) {
+      await network.blockMAC(mac, clientIp || pausedSession.ip);
+      return true;
+    }
 
     const expired = await db.get(
       'SELECT mac, ip FROM sessions WHERE mac = ? AND remaining_seconds <= 0',
@@ -3392,7 +3416,10 @@ app.use(async (req, res, next) => {
       return next();
     }
 
-    const session = await db.get('SELECT mac, ip, remaining_seconds FROM sessions WHERE mac = ? AND remaining_seconds > 0', [mac]);
+    const session = await db.get(
+      'SELECT mac, ip, remaining_seconds FROM sessions WHERE mac = ? AND remaining_seconds > 0 AND (is_paused = 0 OR is_paused IS NULL)',
+      [mac]
+    );
     if (session) {
       // If IP has changed, update the whitelist rule
       if (session.ip !== clientIp) {
@@ -3519,7 +3546,7 @@ app.get('/api/whoami', async (req, res) => {
        const nodemcuResult = await db.get('SELECT value FROM config WHERE key = ?', ['nodemcuDevices']);
        const nodemcuMacs = nodemcuResult?.value ? JSON.parse(nodemcuResult.value).map(d => d.macAddress.toUpperCase()) : [];
 
-       const activeSessions = await db.all('SELECT mac FROM sessions WHERE remaining_seconds > 0');
+       const activeSessions = await db.all('SELECT mac FROM sessions WHERE remaining_seconds > 0 AND (is_paused = 0 OR is_paused IS NULL)');
        const clientSessions = activeSessions.filter(s => !nodemcuMacs.includes(s.mac.toUpperCase()));
 
        if (clientSessions.length > 0) {
@@ -3662,6 +3689,9 @@ app.get('/api/whoami', async (req, res) => {
       if (!session || !session.remaining_seconds || session.remaining_seconds <= 0) {
         const ok = await tryRoamingAuthorize(mac, clientIp, token);
         if (ok) roamingRestored = true;
+      } else {
+        const paused = await db.get('SELECT mac FROM sessions WHERE mac = ? AND remaining_seconds > 0 AND is_paused = 1', [mac]);
+        if (paused) await network.blockMAC(mac, clientIp).catch(() => {});
       }
     }
   } catch (e) {}
@@ -3685,12 +3715,27 @@ app.get('/api/whoami', async (req, res) => {
           }
           await db.run('DELETE FROM sessions WHERE mac = ?', [sessionByToken.mac]);
           await db.run(
-            'INSERT INTO sessions (mac, ip, remaining_seconds, total_paid, connected_at, download_limit, upload_limit, token) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-            [mac, clientIp, (sessionByToken.remaining_seconds || 0) + extraTime, (sessionByToken.total_paid || 0) + extraPaid, sessionByToken.connected_at, sessionByToken.download_limit, sessionByToken.upload_limit, token]
+            'INSERT INTO sessions (mac, ip, remaining_seconds, total_paid, connected_at, download_limit, upload_limit, token, is_paused, pausable) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [
+              mac,
+              clientIp,
+              (sessionByToken.remaining_seconds || 0) + extraTime,
+              (sessionByToken.total_paid || 0) + extraPaid,
+              sessionByToken.connected_at,
+              sessionByToken.download_limit,
+              sessionByToken.upload_limit,
+              token,
+              sessionByToken.is_paused === 1 ? 1 : 0,
+              sessionByToken.pausable != null ? sessionByToken.pausable : 1
+            ]
           );
           await reconcileSynchronizedDevice(sessionByToken.mac, mac, clientIp);
           await network.blockMAC(sessionByToken.mac, sessionByToken.ip);
-          await network.whitelistMAC(mac, clientIp);
+          if (sessionByToken.is_paused === 1) {
+            await network.blockMAC(mac, clientIp);
+          } else if ((sessionByToken.remaining_seconds || 0) + extraTime > 0) {
+            await network.whitelistMAC(mac, clientIp);
+          }
           try {
             res.cookie('rjd_session_token', token, { path: '/', maxAge: 30 * 24 * 60 * 60 * 1000, sameSite: 'lax' });
           } catch (e) {}
@@ -3939,7 +3984,7 @@ app.post('/api/credits/use', async (req, res) => {
       const nodemcuMacs = nodemcuResult?.value ? JSON.parse(nodemcuResult.value).map(d => d.macAddress.toUpperCase()) : [];
 
       if (!nodemcuMacs.includes(mac.toUpperCase())) {
-        const activeSessions = await db.all('SELECT mac FROM sessions WHERE remaining_seconds > 0 AND mac != ?', [mac]);
+        const activeSessions = await db.all('SELECT mac FROM sessions WHERE remaining_seconds > 0 AND (is_paused = 0 OR is_paused IS NULL) AND mac != ?', [mac]);
         const activeClients = activeSessions.filter(s => !nodemcuMacs.includes(s.mac.toUpperCase()));
         if (activeClients.length > 0) {
           return res.status(403).json({ success: false, error: 'System License Revoked: Only 1 device allowed at a time.' });
@@ -4106,7 +4151,7 @@ app.get('/api/sessions', async (req, res) => {
     const rows = await db.all(
       'SELECT mac, ip, remaining_seconds as remainingSeconds, total_paid as totalPaid, connected_at as connectedAt, is_paused as isPaused, token, pausable as isPausable FROM sessions WHERE remaining_seconds > 0'
     );
-    res.json(rows);
+    res.json(rows.map(normalizeClientSessionRow));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -4131,11 +4176,14 @@ app.post('/api/session/pause', async (req, res) => {
       });
     }
 
-    await db.run('UPDATE sessions SET is_paused = 1 WHERE token = ?', [token]);
+    const requestIp = req.ip ? req.ip.replace('::ffff:', '') : '';
+    const blockIp = requestIp && requestIp !== '127.0.0.1' && requestIp !== '::1' ? requestIp : session.ip;
+    await db.run('UPDATE sessions SET is_paused = 1, updated_at = ? WHERE token = ?', [Date.now(), token]);
 
     // Block network access while paused
     try {
       await network.blockMAC(session.mac, session.ip);
+      if (blockIp && blockIp !== session.ip) await network.blockMAC(session.mac, blockIp);
     } catch (e) {
       console.error('[Pause] Network block failed:', e.message);
     }
@@ -4169,7 +4217,7 @@ app.post('/api/session/resume', async (req, res) => {
       });
     }
 
-    await db.run('UPDATE sessions SET is_paused = 0 WHERE token = ?', [token]);
+    await db.run('UPDATE sessions SET is_paused = 0, updated_at = ? WHERE token = ?', [Date.now(), token]);
 
     // Restore network access
     try {
@@ -4214,7 +4262,7 @@ app.get('/api/sessions/me', async (req, res) => {
         [clientIp]
       );
     }
-    res.json(session);
+    res.json(normalizeClientSessionRow(session));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -4223,7 +4271,7 @@ app.get('/api/sales/sessions', requireAdmin, async (req, res) => {
     const rows = await db.all(
       'SELECT mac, ip, remaining_seconds as remainingSeconds, total_paid as totalPaid, connected_at as connectedAt, is_paused as isPaused, token, pausable as isPausable FROM sessions WHERE total_paid > 0 ORDER BY connected_at DESC'
     );
-    res.json(rows);
+    res.json(rows.map(normalizeClientSessionRow));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -4434,7 +4482,7 @@ app.post('/api/sessions/start', async (req, res) => {
 
       // Only apply limit if the CURRENT user is NOT a NodeMCU (which they shouldn't be)
       if (!nodemcuMacs.includes(mac.toUpperCase())) {
-        const activeSessions = await db.all('SELECT mac FROM sessions WHERE remaining_seconds > 0 AND mac != ?', [mac]);
+        const activeSessions = await db.all('SELECT mac FROM sessions WHERE remaining_seconds > 0 AND (is_paused = 0 OR is_paused IS NULL) AND mac != ?', [mac]);
         const activeClients = activeSessions.filter(s => !nodemcuMacs.includes(s.mac.toUpperCase()));
         
         if (activeClients.length > 0) {
@@ -4502,8 +4550,8 @@ app.post('/api/sessions/start', async (req, res) => {
       if (sessionByToken) {
         if (sessionByToken.mac === mac) {
           await db.run(
-            'UPDATE sessions SET remaining_seconds = remaining_seconds + ?, total_paid = total_paid + ?, ip = ?, download_limit = ?, upload_limit = ? WHERE token = ?',
-            [seconds, pesos, clientIp, downloadLimit, uploadLimit, requestedToken]
+            'UPDATE sessions SET remaining_seconds = remaining_seconds + ?, total_paid = total_paid + ?, ip = ?, download_limit = ?, upload_limit = ?, is_paused = 0, updated_at = ? WHERE token = ?',
+            [seconds, pesos, clientIp, downloadLimit, uploadLimit, Date.now(), requestedToken]
           );
           tokenToUse = requestedToken;
         } else {
@@ -4541,8 +4589,8 @@ app.post('/api/sessions/start', async (req, res) => {
           const hasTime = (existingByMac.remaining_seconds || 0) > 0;
           const canonicalToken = hasTime && existingToken ? existingToken : (existingToken || requestedToken);
           await db.run(
-            'UPDATE sessions SET remaining_seconds = remaining_seconds + ?, total_paid = total_paid + ?, ip = ?, download_limit = ?, upload_limit = ?, token = ? WHERE mac = ?',
-            [seconds, pesos, clientIp, downloadLimit, uploadLimit, canonicalToken, mac]
+            'UPDATE sessions SET remaining_seconds = remaining_seconds + ?, total_paid = total_paid + ?, ip = ?, download_limit = ?, upload_limit = ?, token = ?, is_paused = 0, updated_at = ? WHERE mac = ?',
+            [seconds, pesos, clientIp, downloadLimit, uploadLimit, canonicalToken, Date.now(), mac]
           );
           tokenToUse = canonicalToken;
         } else {
@@ -4559,8 +4607,8 @@ app.post('/api/sessions/start', async (req, res) => {
       const existingSession = await db.get('SELECT token FROM sessions WHERE mac = ?', [mac]);
       tokenToUse = (existingSession && existingSession.token) ? existingSession.token : crypto.randomBytes(16).toString('hex');
       await db.run(
-        'INSERT INTO sessions (mac, ip, remaining_seconds, total_paid, download_limit, upload_limit, token, pausable) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(mac) DO UPDATE SET remaining_seconds = remaining_seconds + ?, total_paid = total_paid + ?, ip = ?, download_limit = ?, upload_limit = ?, token = ?',
-        [mac, clientIp, seconds, pesos, downloadLimit, uploadLimit, tokenToUse, pausable, seconds, pesos, clientIp, downloadLimit, uploadLimit, tokenToUse]
+        'INSERT INTO sessions (mac, ip, remaining_seconds, total_paid, download_limit, upload_limit, token, pausable, is_paused) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0) ON CONFLICT(mac) DO UPDATE SET remaining_seconds = remaining_seconds + ?, total_paid = total_paid + ?, ip = ?, download_limit = ?, upload_limit = ?, token = ?, is_paused = 0, updated_at = ?',
+        [mac, clientIp, seconds, pesos, downloadLimit, uploadLimit, tokenToUse, pausable, seconds, pesos, clientIp, downloadLimit, uploadLimit, tokenToUse, Date.now()]
       );
     }
     
@@ -4625,14 +4673,18 @@ app.post('/api/sessions/restore', async (req, res) => {
   if (!token || !mac) return res.status(400).json({ error: 'Invalid request' });
 
   try {
-    const session = await db.get('SELECT * FROM sessions WHERE token = ?', [token]);
+    const session = await db.get('SELECT * FROM sessions WHERE token = ? AND remaining_seconds > 0', [token]);
     if (!session) return res.status(404).json({ error: 'Session not found' });
     
     if (session.mac === mac) {
        // Same device, just update IP if changed and ensure whitelisted
        if (session.ip !== clientIp) {
          await db.run('UPDATE sessions SET ip = ? WHERE mac = ?', [clientIp, mac]);
-         await network.whitelistMAC(mac, clientIp);
+         if (session.is_paused === 1) {
+           await network.blockMAC(mac, clientIp);
+         } else if ((session.remaining_seconds || 0) > 0) {
+           await network.whitelistMAC(mac, clientIp);
+         }
        }
        return res.json({ success: true, remainingSeconds: session.remaining_seconds, isPaused: session.is_paused === 1 });
     }
@@ -4656,14 +4708,29 @@ app.post('/api/sessions/restore', async (req, res) => {
     
     // Insert new record with merged data
     await db.run(
-      'INSERT INTO sessions (mac, ip, remaining_seconds, total_paid, connected_at, download_limit, upload_limit, token) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      [mac, clientIp, session.remaining_seconds + extraTime, session.total_paid + extraPaid, session.connected_at, session.download_limit, session.upload_limit, token]
+      'INSERT INTO sessions (mac, ip, remaining_seconds, total_paid, connected_at, download_limit, upload_limit, token, is_paused, pausable) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [
+        mac,
+        clientIp,
+        session.remaining_seconds + extraTime,
+        session.total_paid + extraPaid,
+        session.connected_at,
+        session.download_limit,
+        session.upload_limit,
+        token,
+        session.is_paused === 1 ? 1 : 0,
+        session.pausable != null ? session.pausable : 1
+      ]
     );
     await reconcileSynchronizedDevice(session.mac, mac, clientIp);
     
     // Switch whitelist
     await network.blockMAC(session.mac, session.ip); // Block old
-    await network.whitelistMAC(mac, clientIp); // Allow new
+    if (session.is_paused === 1) {
+      await network.blockMAC(mac, clientIp);
+    } else {
+      await network.whitelistMAC(mac, clientIp); // Allow new
+    }
     
     try {
       res.cookie('rjd_session_token', token, { path: '/', maxAge: 30 * 24 * 60 * 60 * 1000, sameSite: 'lax' });
@@ -4681,7 +4748,7 @@ app.post('/api/sessions/pause', async (req, res) => {
   if (!token) return res.status(400).json({ error: 'Token required' });
 
   try {
-    const session = await db.get('SELECT * FROM sessions WHERE token = ?', [token]);
+    const session = await db.get('SELECT * FROM sessions WHERE token = ? AND remaining_seconds > 0', [token]);
     if (!session) return res.status(404).json({ error: 'Session not found' });
 
     if (session.pausable === 0) {
@@ -4696,8 +4763,11 @@ app.post('/api/sessions/pause', async (req, res) => {
       });
     }
 
-    await db.run('UPDATE sessions SET is_paused = 1 WHERE token = ?', [token]);
+    const requestIp = req.ip ? req.ip.replace('::ffff:', '') : '';
+    const blockIp = requestIp && requestIp !== '127.0.0.1' && requestIp !== '::1' ? requestIp : session.ip;
+    await db.run('UPDATE sessions SET is_paused = 1, updated_at = ? WHERE token = ?', [Date.now(), token]);
     await network.blockMAC(session.mac, session.ip);
+    if (blockIp && blockIp !== session.ip) await network.blockMAC(session.mac, blockIp);
 
     console.log(`[AUTH] Session paused for ${session.mac}`);
     res.json({
@@ -4713,7 +4783,7 @@ app.post('/api/sessions/resume', async (req, res) => {
   if (!token) return res.status(400).json({ error: 'Token required' });
 
   try {
-    const session = await db.get('SELECT * FROM sessions WHERE token = ?', [token]);
+    const session = await db.get('SELECT * FROM sessions WHERE token = ? AND remaining_seconds > 0', [token]);
     if (!session) return res.status(404).json({ error: 'Session not found' });
 
     if (!session.is_paused || session.is_paused === 0) {
@@ -4724,7 +4794,7 @@ app.post('/api/sessions/resume', async (req, res) => {
       });
     }
 
-    await db.run('UPDATE sessions SET is_paused = 0 WHERE token = ?', [token]);
+    await db.run('UPDATE sessions SET is_paused = 0, updated_at = ? WHERE token = ?', [Date.now(), token]);
     
     // Use forceNetworkRefresh to ensure internet returns properly
     await network.forceNetworkRefresh(session.mac, session.ip);
@@ -4824,7 +4894,7 @@ app.post('/api/config/qos', requireAdmin, async (req, res) => {
         
         // Restore limits for all active devices/sessions because initQoS wipes TC classes
         const activeDevices = await db.all('SELECT mac, ip FROM wifi_devices WHERE is_active = 1');
-        const activeSessions = await db.all('SELECT mac, ip FROM sessions WHERE remaining_seconds > 0');
+        const activeSessions = await db.all('SELECT mac, ip FROM sessions WHERE remaining_seconds > 0 AND (is_paused = 0 OR is_paused IS NULL)');
         
         // Merge list to avoid duplicates
         const devicesToRestore = new Map();
@@ -7543,7 +7613,7 @@ app.post('/api/bandwidth/settings', requireAdmin, async (req, res) => {
     // Re-apply QoS limits to all active devices when defaults change
     // This ensures that devices currently using the default limits get the new limits immediately
     try {
-      const activeSessions = await db.all('SELECT mac, ip, download_limit, upload_limit FROM sessions WHERE remaining_seconds > 0 AND ip IS NOT NULL');
+      const activeSessions = await db.all('SELECT mac, ip, download_limit, upload_limit FROM sessions WHERE remaining_seconds > 0 AND (is_paused = 0 OR is_paused IS NULL) AND ip IS NOT NULL');
       console.log(`[BANDWIDTH] Re-applying effective QoS for ${activeSessions.length} authorized sessions`);
       for (const session of activeSessions) {
         const device = await db.get('SELECT download_limit, upload_limit FROM wifi_devices WHERE mac = ?', [session.mac]);
@@ -8279,7 +8349,7 @@ app.post('/api/devices/scan', requireAdmin, async (req, res) => {
     const now = Date.now();
     
     // Get current active sessions to sync with
-    const activeSessions = await db.all('SELECT mac, ip, remaining_seconds as remainingSeconds, total_paid as totalPaid, connected_at as connectedAt, download_limit as sessionDownloadLimit, upload_limit as sessionUploadLimit FROM sessions WHERE remaining_seconds > 0');
+    const activeSessions = await db.all('SELECT mac, ip, remaining_seconds as remainingSeconds, total_paid as totalPaid, connected_at as connectedAt, download_limit as sessionDownloadLimit, upload_limit as sessionUploadLimit FROM sessions WHERE remaining_seconds > 0 AND (is_paused = 0 OR is_paused IS NULL)');
     const sessionMap = new Map();
     activeSessions.forEach(session => {
       sessionMap.set(session.mac.toUpperCase(), session);
@@ -8471,7 +8541,7 @@ app.put('/api/devices/:id', requireAdmin, async (req, res) => {
     
     // Reapply shaping only for an authorized session. QoS changes must never authorize a client.
     if (updatedDevice.ip && updatedDevice.mac && (sessionTime !== undefined || downloadLimit !== undefined || uploadLimit !== undefined)) {
-      const activeSession = await db.get('SELECT download_limit, upload_limit FROM sessions WHERE mac = ? AND remaining_seconds > 0', [updatedDevice.mac]);
+      const activeSession = await db.get('SELECT download_limit, upload_limit FROM sessions WHERE mac = ? AND remaining_seconds > 0 AND (is_paused = 0 OR is_paused IS NULL)', [updatedDevice.mac]);
       if (activeSession) {
         const defaultDlRow = await db.get("SELECT value FROM config WHERE key = 'default_download_limit'");
         const defaultUlRow = await db.get("SELECT value FROM config WHERE key = 'default_upload_limit'");
@@ -8542,8 +8612,8 @@ app.post('/api/devices/:id/connect', requireAdmin, async (req, res) => {
     if (existingSession) {
       // Update existing session
       await db.run(
-        'UPDATE sessions SET remaining_seconds = remaining_seconds + ?, ip = ? WHERE mac = ?',
-        [sessionTime, device.ip, device.mac]
+        'UPDATE sessions SET remaining_seconds = remaining_seconds + ?, ip = ?, is_paused = 0, updated_at = ? WHERE mac = ?',
+        [sessionTime, device.ip, Date.now(), device.mac]
       );
     } else {
       // Create new session
@@ -9602,7 +9672,7 @@ async function bootupRestore(isRestricted = false) {
     console.warn('[RJD] Failed to load NodeMCU devices for whitelisting:', e.message);
   }
 
-  const sessions = await db.all('SELECT mac, ip FROM sessions WHERE remaining_seconds > 0 ORDER BY connected_at DESC');
+  const sessions = await db.all('SELECT mac, ip FROM sessions WHERE remaining_seconds > 0 AND (is_paused = 0 OR is_paused IS NULL) ORDER BY connected_at DESC');
   
   // NodeMCU Exemption: Whitelist all NodeMCU devices regardless of sessions
   try {
@@ -9900,8 +9970,8 @@ app.post('/api/vouchers/activate', async (req, res) => {
       if (sessionByToken) {
         if (sessionByToken.mac === mac) {
           await db.run(
-            'UPDATE sessions SET remaining_seconds = remaining_seconds + ?, total_paid = total_paid + ?, ip = ? WHERE token = ?',
-            [seconds, amount, clientIp, requestedToken]
+            'UPDATE sessions SET remaining_seconds = remaining_seconds + ?, total_paid = total_paid + ?, ip = ?, is_paused = 0, updated_at = ? WHERE token = ?',
+            [seconds, amount, clientIp, Date.now(), requestedToken]
           );
           tokenToUse = requestedToken;
         } else {
@@ -9929,8 +9999,8 @@ app.post('/api/vouchers/activate', async (req, res) => {
           const hasTime = (existingByMac.remaining_seconds || 0) > 0;
           const canonicalToken = hasTime && existingToken ? existingToken : (existingToken || requestedToken);
           await db.run(
-            'UPDATE sessions SET remaining_seconds = remaining_seconds + ?, total_paid = total_paid + ?, ip = ?, token = ? WHERE mac = ?',
-            [seconds, amount, clientIp, canonicalToken, mac]
+            'UPDATE sessions SET remaining_seconds = remaining_seconds + ?, total_paid = total_paid + ?, ip = ?, token = ?, is_paused = 0, updated_at = ? WHERE mac = ?',
+            [seconds, amount, clientIp, canonicalToken, Date.now(), mac]
           );
           tokenToUse = canonicalToken;
         } else {
@@ -9948,8 +10018,8 @@ app.post('/api/vouchers/activate', async (req, res) => {
       const existingSession = await db.get('SELECT token FROM sessions WHERE mac = ?', [mac]);
       tokenToUse = existingSession && existingSession.token ? existingSession.token : crypto.randomBytes(16).toString('hex');
       await db.run(
-        'INSERT INTO sessions (mac, ip, remaining_seconds, total_paid, token) VALUES (?, ?, ?, ?, ?) ON CONFLICT(mac) DO UPDATE SET remaining_seconds = remaining_seconds + ?, total_paid = total_paid + ?, ip = ?, token = ?',
-        [mac, clientIp, seconds, amount, tokenToUse, seconds, amount, clientIp, tokenToUse]
+        'INSERT INTO sessions (mac, ip, remaining_seconds, total_paid, token, is_paused) VALUES (?, ?, ?, ?, ?, 0) ON CONFLICT(mac) DO UPDATE SET remaining_seconds = remaining_seconds + ?, total_paid = total_paid + ?, ip = ?, token = ?, is_paused = 0, updated_at = ?',
+        [mac, clientIp, seconds, amount, tokenToUse, seconds, amount, clientIp, tokenToUse, Date.now()]
       );
     }
     
@@ -10041,7 +10111,7 @@ function startBackgroundTimers() {
         // A device may have an expired old session AND a new active session
         // (just inserted coin). Blocking would remove speed limits for the active session.
         const hasActive = await db.get(
-          'SELECT mac FROM sessions WHERE mac = ? AND remaining_seconds > 0',
+          'SELECT mac FROM sessions WHERE mac = ? AND remaining_seconds > 0 AND (is_paused = 0 OR is_paused IS NULL)',
           [s.mac]
         );
         if (hasActive) {
@@ -10068,7 +10138,7 @@ function startBackgroundTimers() {
 
   const tcCleanupTimer = setInterval(async () => {
     try {
-      const activeSessions = await db.all('SELECT ip FROM sessions WHERE remaining_seconds > 0');
+      const activeSessions = await db.all('SELECT ip FROM sessions WHERE remaining_seconds > 0 AND (is_paused = 0 OR is_paused IS NULL)');
       const activeIPs = new Set(activeSessions.map(s => s.ip));
 
       // Skip expensive operations when no sessions exist at all
@@ -10079,7 +10149,7 @@ function startBackgroundTimers() {
 
       // CRITICAL: Only remove speed limits for IPs that do NOT have an active session.
       const inactiveSessions = await db.all(
-        'SELECT mac, ip FROM sessions WHERE remaining_seconds <= 0 AND ip NOT IN (SELECT ip FROM sessions WHERE remaining_seconds > 0 AND ip IS NOT NULL AND ip != "")'
+        'SELECT mac, ip FROM sessions WHERE (remaining_seconds <= 0 OR is_paused = 1) AND ip NOT IN (SELECT ip FROM sessions WHERE remaining_seconds > 0 AND (is_paused = 0 OR is_paused IS NULL) AND ip IS NOT NULL AND ip != "")'
       );
       for (const session of inactiveSessions) {
         await network.removeSpeedLimit(session.mac, session.ip);
@@ -10561,8 +10631,8 @@ app.post('/api/free-internet/claim', async (req, res) => {
     if (existingSession) {
       // Add time to existing session
       await db.run(
-        'UPDATE sessions SET remaining_seconds = remaining_seconds + ?, total_paid = total_paid + 0 WHERE mac = ?',
-        [seconds, mac]
+        'UPDATE sessions SET remaining_seconds = remaining_seconds + ?, total_paid = total_paid + 0, is_paused = 0, updated_at = ? WHERE mac = ?',
+        [seconds, Date.now(), mac]
       );
     } else {
       // Create new session

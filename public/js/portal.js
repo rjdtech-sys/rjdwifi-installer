@@ -585,7 +585,9 @@
     }
 
     // Update status
-    if (session.isPaused) {
+    const isPaused = session.isPaused === true || session.isPaused === 1 || session.is_paused === true || session.is_paused === 1;
+
+    if (isPaused) {
       if (elements.statusDot) {
         elements.statusDot.className = 'status-dot paused';
       }
@@ -619,8 +621,16 @@
       if (elements.creditPesos) elements.creditPesos.textContent = creditPesos;
     }
 
-    // Start countdown
-    startCountdown(session.remainingSeconds || session.remaining_seconds);
+    // Start countdown only while active. Paused sessions must remain frozen.
+    const remaining = session.remainingSeconds || session.remaining_seconds;
+    if (isPaused) {
+      stopCountdown();
+      if (elements.sessionTimer) {
+        elements.sessionTimer.textContent = formatSessionTime(remaining);
+      }
+    } else {
+      startCountdown(remaining);
+    }
   }
 
   function showLogin() {
@@ -1496,7 +1506,9 @@
   async function handlePause() {
     if (!currentSession || !currentSession.token) return;
 
-    if (currentSession.isPaused) {
+    const isPaused = currentSession.isPaused === true || currentSession.isPaused === 1 || currentSession.is_paused === true || currentSession.is_paused === 1;
+
+    if (isPaused) {
       // Resume
       const result = await resumeSession(currentSession.token);
       if (result.success) {
@@ -1634,7 +1646,7 @@
           mac: clientMac,
           remainingSeconds: remaining,
           remaining_seconds: remaining,
-          isPaused: mySession.isPaused || false,
+          isPaused: mySession.isPaused === true || mySession.isPaused === 1 || mySession.is_paused === true || mySession.is_paused === 1,
           token: mySession.token || '',
           totalPaid: mySession.totalPaid || 0,
           connectedAt: mySession.connectedAt || null,
