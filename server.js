@@ -2047,6 +2047,7 @@ const { syncSaleToCloud, getSyncStats } = require('./lib/edge-sync');
 // ZeroTier Installation State (in-memory)
 const zeroTierInstallState = {
   running: false,
+  operation: 'idle',
   progress: 0,
   success: null,
   error: null,
@@ -2058,30 +2059,127 @@ const zeroTierInstallState = {
 
 let zeroTierInstallProcess = null;
 
-function resetZeroTierInstallState() {
-  zeroTierInstallState.running = false;
-  zeroTierInstallState.progress = 0;
-  zeroTierInstallState.success = null;
-  zeroTierInstallState.error = null;
-  zeroTierInstallState.logs = [];
-  zeroTierInstallState.startedAt = null;
-  zeroTierInstallState.finishedAt = null;
-  zeroTierInstallState.lastUpdateAt = null;
+const tailscaleOperationState = {
+  running: false,
+  operation: 'idle',
+  progress: 0,
+  success: null,
+  error: null,
+  logs: [],
+  startedAt: null,
+  finishedAt: null,
+  lastUpdateAt: null,
+  loginUrl: null
+};
+
+let tailscaleOperationProcess = null;
+
+function resetOperationState(state, operation = 'idle') {
+  state.running = false;
+  state.operation = operation;
+  state.progress = 0;
+  state.success = null;
+  state.error = null;
+  state.logs = [];
+  state.startedAt = null;
+  state.finishedAt = null;
+  state.lastUpdateAt = null;
+  if ('loginUrl' in state) state.loginUrl = null;
 }
 
-function appendZeroTierLog(message) {
+function resetZeroTierInstallState(operation = 'idle') {
+  resetOperationState(zeroTierInstallState, operation);
+}
+
+function appendOperationLog(state, message) {
   if (!message) return;
   const lines = message.toString().split('\n');
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed) continue;
-    zeroTierInstallState.logs.push(trimmed);
+    state.logs.push(trimmed);
+    if ('loginUrl' in state) {
+      const match = trimmed.match(/https:\/\/login\.tailscale\.com\/[^\s]+/);
+      if (match) state.loginUrl = match[0];
+    }
   }
   // Keep only the last 200 lines to avoid unbounded growth
-  if (zeroTierInstallState.logs.length > 200) {
-    zeroTierInstallState.logs = zeroTierInstallState.logs.slice(-200);
+  if (state.logs.length > 200) {
+    state.logs = state.logs.slice(-200);
   }
-  zeroTierInstallState.lastUpdateAt = Date.now();
+  state.lastUpdateAt = Date.now();
+}
+
+function appendZeroTierLog(message) {
+  appendOperationLog(zeroTierInstallState, message);
+}
+
+function appendTailscaleLog(message) {
+  appendOperationLog(tailscaleOperationState, message);
+}
+
+function startManagedOperation({ state, processRefSetter, operation, command, env, onSuccess, onFailure, logPrefix }) {
+  state.running = true;
+  state.operation = operation;
+  state.progress = 5;
+  state.success = null;
+  state.error = null;
+  state.logs = [];
+  state.startedAt = Date.now();
+  state.finishedAt = null;
+  state.lastUpdateAt = Date.now();
+  if ('loginUrl' in state) state.loginUrl = null;
+
+  appendOperationLog(state, `[${logPrefix}] Starting ${operation}...`);
+
+  const child = spawn('bash', ['-c', command], {
+    env: { ...process.env, ...(env || {}) }
+  });
+  processRefSetter(child);
+
+  child.stdout.on('data', (data) => {
+    appendOperationLog(state, data);
+    if (state.progress < 90) state.progress = Math.min(90, state.progress + 4);
+  });
+
+  child.stderr.on('data', (data) => {
+    appendOperationLog(state, '[stderr] ' + data.toString());
+    if (state.progress < 90) state.progress = Math.min(90, state.progress + 3);
+  });
+
+  child.on('error', (err) => {
+    appendOperationLog(state, `[${logPrefix}] Failed to start: ${err.message}`);
+    state.running = false;
+    state.success = false;
+    state.error = err.message;
+    state.finishedAt = Date.now();
+    processRefSetter(null);
+  });
+
+  child.on('close', async (code) => {
+    state.running = false;
+    state.finishedAt = Date.now();
+    processRefSetter(null);
+
+    try {
+      if (code === 0 || (state.loginUrl && operation === 'install')) {
+        state.success = true;
+        state.progress = 100;
+        appendOperationLog(state, `[${logPrefix}] ${operation} completed${state.loginUrl ? ' - login approval required.' : ' successfully.'}`);
+        if (onSuccess) await onSuccess(code, state);
+      } else {
+        state.success = false;
+        state.error = `${operation} exited with code ${code}`;
+        state.progress = Math.max(state.progress, 50);
+        appendOperationLog(state, `[${logPrefix}] ${operation} failed with exit code ${code}.`);
+        if (onFailure) await onFailure(code, state);
+      }
+    } catch (e) {
+      appendOperationLog(state, `[${logPrefix}] Post-${operation} check failed: ${e && e.message ? e.message : String(e)}`);
+    }
+  });
+
+  return child;
 }
 
 async function getZeroTierStatus() {
@@ -2243,6 +2341,25 @@ async function enableSshRemoteAccess() {
   };
 }
 
+async function disableSshRemoteAccess() {
+  const commands = [
+    'systemctl disable ssh >/dev/null 2>&1 || systemctl disable sshd >/dev/null 2>&1 || true',
+    'systemctl stop ssh >/dev/null 2>&1 || systemctl stop sshd >/dev/null 2>&1 || true'
+  ];
+
+  const output = [];
+  for (const command of commands) {
+    const { stdout, stderr } = await execPromise(command, { timeout: 30000 });
+    if (stdout && stdout.trim()) output.push(stdout.trim());
+    if (stderr && stderr.trim()) output.push(stderr.trim());
+  }
+
+  return {
+    status: await getSshStatus(),
+    output: output.slice(-20)
+  };
+}
+
 async function getTailscaleStatus() {
   const status = {
     installed: false,
@@ -2347,6 +2464,72 @@ async function installTailscaleRemoteAccess(authKey) {
     status,
     output: output.slice(-20)
   };
+}
+
+function startTailscaleInstall(authKey) {
+  const command = `
+set -e
+if ! command -v tailscale >/dev/null 2>&1; then
+  echo "[Tailscale] Installing official package..."
+  curl -fsSL https://tailscale.com/install.sh | sh
+else
+  echo "[Tailscale] Already installed."
+fi
+systemctl enable --now tailscaled >/dev/null 2>&1 || systemctl restart tailscaled
+if [ -n "$TS_AUTHKEY" ]; then
+  echo "[Tailscale] Running tailscale up with auth key..."
+  tailscale up --authkey "$TS_AUTHKEY" --ssh --accept-routes
+else
+  echo "[Tailscale] Running tailscale up. Open the login URL if shown."
+  tailscale up --ssh --accept-routes
+fi
+tailscale set --ssh >/dev/null 2>&1 || true
+tailscale status || true
+`;
+
+  return startManagedOperation({
+    state: tailscaleOperationState,
+    processRefSetter: (child) => { tailscaleOperationProcess = child; },
+    operation: 'install',
+    command,
+    env: { TS_AUTHKEY: authKey || '' },
+    logPrefix: 'Tailscale',
+    onSuccess: async () => {
+      const status = await getTailscaleStatus();
+      appendTailscaleLog(`[Tailscale] Status: installed=${status.installed}, state=${status.backendState || 'unknown'}, ips=${status.tailscaleIps.join(', ') || '-'}`);
+    }
+  });
+}
+
+function startTailscaleUninstall() {
+  const command = `
+set +e
+echo "[Tailscale] Logging out and stopping service..."
+tailscale logout 2>/dev/null || true
+systemctl stop tailscaled 2>/dev/null || true
+systemctl disable tailscaled 2>/dev/null || true
+echo "[Tailscale] Removing package..."
+if command -v apt-get >/dev/null 2>&1; then
+  apt-get remove -y tailscale || true
+  apt-get purge -y tailscale || true
+  rm -f /etc/apt/sources.list.d/tailscale.list
+  rm -f /usr/share/keyrings/tailscale-archive-keyring.gpg
+fi
+rm -rf /var/lib/tailscale
+echo "[Tailscale] Uninstall finished."
+`;
+
+  return startManagedOperation({
+    state: tailscaleOperationState,
+    processRefSetter: (child) => { tailscaleOperationProcess = child; },
+    operation: 'uninstall',
+    command,
+    logPrefix: 'Tailscale',
+    onSuccess: async () => {
+      const status = await getTailscaleStatus();
+      appendTailscaleLog(`[Tailscale] Status: installed=${status.installed}`);
+    }
+  });
 }
 
 async function getSessionByTokenForClient(token) {
@@ -6897,6 +7080,19 @@ app.post('/api/remote/ssh/enable', requireAdmin, async (req, res) => {
   }
 });
 
+app.post('/api/remote/ssh/disable', requireAdmin, async (req, res) => {
+  try {
+    const result = await disableSshRemoteAccess();
+    res.json({
+      success: true,
+      message: 'SSH stopped and disabled',
+      ...result
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/tailscale/status', requireAdmin, async (req, res) => {
   try {
     res.json(await getTailscaleStatus());
@@ -6907,6 +7103,13 @@ app.get('/api/tailscale/status', requireAdmin, async (req, res) => {
 
 app.post('/api/tailscale/install', requireAdmin, async (req, res) => {
   try {
+    if (tailscaleOperationState.running) {
+      return res.status(400).json({
+        error: 'Tailscale operation is already in progress',
+        status: tailscaleOperationState
+      });
+    }
+
     const authKey = req.body && typeof req.body.authKey === 'string'
       ? req.body.authKey.trim()
       : '';
@@ -6915,15 +7118,48 @@ app.post('/api/tailscale/install', requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'Invalid Tailscale auth key format. Expected tskey-auth-...' });
     }
 
-    const result = await installTailscaleRemoteAccess(authKey || null);
+    startTailscaleInstall(authKey || null);
     res.json({
       success: true,
       message: authKey
-        ? 'Tailscale installed and authenticated'
-        : 'Tailscale installed. Open the login URL to authenticate if shown.',
-      ...result
+        ? 'Tailscale installation/authentication started'
+        : 'Tailscale installation started. Open the login URL if shown.',
+      status: tailscaleOperationState
     });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/tailscale/operation-status', requireAdmin, async (req, res) => {
+  try {
+    res.json(tailscaleOperationState);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/tailscale/uninstall', requireAdmin, async (req, res) => {
+  try {
+    if (tailscaleOperationState.running) {
+      return res.status(400).json({
+        error: 'Tailscale operation is already in progress',
+        status: tailscaleOperationState
+      });
+    }
+
+    startTailscaleUninstall();
+    res.json({
+      success: true,
+      message: 'Tailscale uninstall started',
+      status: tailscaleOperationState
+    });
+  } catch (err) {
+    tailscaleOperationState.running = false;
+    tailscaleOperationState.success = false;
+    tailscaleOperationState.error = err.message;
+    tailscaleOperationState.finishedAt = Date.now();
+    appendTailscaleLog('[Uninstaller] Error while starting uninstall: ' + err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -6954,7 +7190,7 @@ app.post('/api/zerotier/install', requireAdmin, async (req, res) => {
       });
     }
 
-    resetZeroTierInstallState();
+    resetZeroTierInstallState('install');
     zeroTierInstallState.running = true;
     zeroTierInstallState.progress = 5;
     zeroTierInstallState.startedAt = Date.now();
@@ -7037,6 +7273,62 @@ app.get('/api/zerotier/install-status', requireAdmin, async (req, res) => {
   try {
     res.json(zeroTierInstallState);
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/zerotier/uninstall', requireAdmin, async (req, res) => {
+  try {
+    if (zeroTierInstallState.running) {
+      return res.status(400).json({
+        error: 'ZeroTier operation is already in progress',
+        status: zeroTierInstallState
+      });
+    }
+
+    resetZeroTierInstallState('uninstall');
+
+    const uninstallCommand = `
+set +e
+echo "[ZeroTier] Leaving joined networks..."
+if command -v zerotier-cli >/dev/null 2>&1; then
+  zerotier-cli listnetworks 2>/dev/null | awk 'NR>1 {print $3}' | grep -E '^[0-9a-fA-F]{16}$' | while read nwid; do zerotier-cli leave "$nwid" || true; done
+fi
+echo "[ZeroTier] Stopping service..."
+systemctl stop zerotier-one 2>/dev/null || true
+systemctl disable zerotier-one 2>/dev/null || true
+echo "[ZeroTier] Removing package..."
+if command -v apt-get >/dev/null 2>&1; then
+  apt-get remove -y zerotier-one || true
+  apt-get purge -y zerotier-one || true
+fi
+rm -rf /var/lib/zerotier-one
+echo "[ZeroTier] Uninstall finished."
+`;
+
+    startManagedOperation({
+      state: zeroTierInstallState,
+      processRefSetter: (child) => { zeroTierInstallProcess = child; },
+      operation: 'uninstall',
+      command: uninstallCommand,
+      logPrefix: 'ZeroTier',
+      onSuccess: async () => {
+        const status = await getZeroTierStatus();
+        appendZeroTierLog(`[ZeroTier] Status: installed=${status.installed}`);
+      }
+    });
+
+    res.json({
+      success: true,
+      message: 'ZeroTier uninstall started',
+      status: zeroTierInstallState
+    });
+  } catch (err) {
+    zeroTierInstallState.running = false;
+    zeroTierInstallState.success = false;
+    zeroTierInstallState.error = err.message;
+    zeroTierInstallState.finishedAt = Date.now();
+    appendZeroTierLog('[Uninstaller] Error while starting uninstall: ' + err.message);
     res.status(500).json({ error: err.message });
   }
 });

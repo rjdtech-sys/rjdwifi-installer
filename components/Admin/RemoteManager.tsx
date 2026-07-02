@@ -22,6 +22,7 @@ interface ZeroTierStatus {
 
 interface ZeroTierInstallState {
   running: boolean;
+  operation?: 'idle' | 'install' | 'uninstall' | string;
   progress: number;
   success: boolean | null;
   error: string | null;
@@ -29,6 +30,10 @@ interface ZeroTierInstallState {
   startedAt: number | null;
   finishedAt: number | null;
   lastUpdateAt: number | null;
+}
+
+interface RemoteOperationState extends ZeroTierInstallState {
+  loginUrl?: string | null;
 }
 
 interface SshStatus {
@@ -65,6 +70,8 @@ const RemoteManager: React.FC = () => {
   const [tailscaleBusy, setTailscaleBusy] = useState<boolean>(false);
   const [tailscaleMessage, setTailscaleMessage] = useState<string | null>(null);
   const [tailscaleError, setTailscaleError] = useState<string | null>(null);
+  const [tailscaleOperationState, setTailscaleOperationState] = useState<RemoteOperationState | null>(null);
+  const [tailscalePolling, setTailscalePolling] = useState<boolean>(false);
 
   const [status, setStatus] = useState<ZeroTierStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState<boolean>(true);
@@ -98,6 +105,7 @@ const RemoteManager: React.FC = () => {
   useEffect(() => {
     loadSshStatus();
     loadTailscaleStatus();
+    loadTailscaleOperationState();
     loadStatus();
     loadInstallState();
   }, []);
@@ -136,6 +144,31 @@ const RemoteManager: React.FC = () => {
     }
   };
 
+  const disableSsh = async () => {
+    if (!confirm('Disable and stop SSH port 22? WinSCP/SSH access will disconnect until you enable it again from the web admin.')) {
+      return;
+    }
+    setSshBusy(true);
+    setSshMessage(null);
+    setSshError(null);
+    try {
+      const res = await fetch('/api/remote/ssh/disable', {
+        method: 'POST',
+        headers: getAdminHeaders({ 'Content-Type': 'application/json' })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) {
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      setSshStatus(data.status);
+      setSshMessage(data.message || 'SSH stopped and disabled.');
+    } catch (e: any) {
+      setSshError(e?.message || 'Failed to disable SSH.');
+    } finally {
+      setSshBusy(false);
+    }
+  };
+
   const loadTailscaleStatus = async () => {
     try {
       const res = await fetch('/api/tailscale/status', {
@@ -146,6 +179,48 @@ const RemoteManager: React.FC = () => {
     } catch (e) {
       console.error('Failed to load Tailscale status', e);
     }
+  };
+
+  const loadTailscaleOperationState = async () => {
+    try {
+      const res = await fetch('/api/tailscale/operation-status', {
+        headers: getAdminHeaders()
+      });
+      if (!res.ok) return;
+      const data: RemoteOperationState = await res.json();
+      setTailscaleOperationState(data);
+      if (data.running) {
+        setTimeout(startTailscalePolling, 0);
+      }
+    } catch {
+      // Ignore. Operation state is best-effort.
+    }
+  };
+
+  const startTailscalePolling = () => {
+    if (tailscalePolling) return;
+    setTailscalePolling(true);
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch('/api/tailscale/operation-status', {
+          headers: getAdminHeaders()
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data: RemoteOperationState = await res.json();
+        setTailscaleOperationState(data);
+
+        if (!data.running) {
+          clearInterval(interval);
+          setTailscalePolling(false);
+          setTimeout(loadTailscaleStatus, 1500);
+        }
+      } catch (e) {
+        console.error('Failed to poll Tailscale operation status', e);
+        clearInterval(interval);
+        setTailscalePolling(false);
+      }
+    }, 2000);
   };
 
   const installTailscale = async () => {
@@ -167,11 +242,37 @@ const RemoteManager: React.FC = () => {
       if (!res.ok || data.error) {
         throw new Error(data.error || `HTTP ${res.status}`);
       }
-      setTailscaleStatus(data.status);
-      setTailscaleMessage(data.message || 'Tailscale setup command completed.');
-      setTimeout(loadTailscaleStatus, 1500);
+      if (data.status) setTailscaleOperationState(data.status);
+      setTailscaleMessage(data.message || 'Tailscale operation started.');
+      startTailscalePolling();
     } catch (e: any) {
       setTailscaleError(e?.message || 'Failed to setup Tailscale.');
+    } finally {
+      setTailscaleBusy(false);
+    }
+  };
+
+  const uninstallTailscale = async () => {
+    if (!confirm('Uninstall Tailscale from this Orange Pi? This removes its Tailscale IP until installed again.')) {
+      return;
+    }
+    setTailscaleBusy(true);
+    setTailscaleMessage(null);
+    setTailscaleError(null);
+    try {
+      const res = await fetch('/api/tailscale/uninstall', {
+        method: 'POST',
+        headers: getAdminHeaders({ 'Content-Type': 'application/json' })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) {
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      if (data.status) setTailscaleOperationState(data.status);
+      setTailscaleMessage(data.message || 'Tailscale uninstall started.');
+      startTailscalePolling();
+    } catch (e: any) {
+      setTailscaleError(e?.message || 'Failed to uninstall Tailscale.');
     } finally {
       setTailscaleBusy(false);
     }
@@ -209,6 +310,9 @@ const RemoteManager: React.FC = () => {
       }
       const data: ZeroTierInstallState = await res.json();
       setInstallState(data);
+      if (data.running) {
+        setTimeout(startInstallPolling, 0);
+      }
     } catch {
       // Ignore install state errors; installation may not have been started yet
     }
@@ -275,6 +379,41 @@ const RemoteManager: React.FC = () => {
     } catch (e: any) {
       console.error('Failed to start ZeroTier installation', e);
       setInstallRequestError(e?.message || 'Failed to start ZeroTier installation');
+    }
+  };
+
+  const handleUninstallZeroTier = async () => {
+    if (!confirm('Uninstall ZeroTier from this Orange Pi? It will leave/remove local ZeroTier identity and networks.')) {
+      return;
+    }
+    setInstallRequestError(null);
+    setJoinMessage(null);
+    setJoinError(null);
+
+    try {
+      const res = await fetch('/api/zerotier/uninstall', {
+        method: 'POST',
+        headers: getAdminHeaders({ 'Content-Type': 'application/json' })
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok || data.error) {
+        const message = data.error || `HTTP ${res.status}`;
+        setInstallRequestError(message);
+        if (data.status) {
+          setInstallState(data.status);
+        }
+        return;
+      }
+
+      if (data.status) {
+        setInstallState(data.status);
+      }
+      startInstallPolling();
+    } catch (e: any) {
+      console.error('Failed to start ZeroTier uninstall', e);
+      setInstallRequestError(e?.message || 'Failed to start ZeroTier uninstall');
     }
   };
 
@@ -362,6 +501,18 @@ const RemoteManager: React.FC = () => {
     if (typeof installState.progress !== 'number' || isNaN(installState.progress)) return 0;
     return Math.max(0, Math.min(100, Math.round(installState.progress)));
   }, [installState]);
+
+  const tailscaleProgress = useMemo(() => {
+    if (!tailscaleOperationState) return 0;
+    if (typeof tailscaleOperationState.progress !== 'number' || isNaN(tailscaleOperationState.progress)) return 0;
+    return Math.max(0, Math.min(100, Math.round(tailscaleOperationState.progress)));
+  }, [tailscaleOperationState]);
+
+  const isTailscaleOperationStuck = useMemo(() => {
+    if (!tailscaleOperationState || !tailscaleOperationState.running) return false;
+    if (!tailscaleOperationState.lastUpdateAt) return false;
+    return Date.now() - tailscaleOperationState.lastUpdateAt > 45_000;
+  }, [tailscaleOperationState]);
 
   const isInstallStuck = useMemo(() => {
     if (!installState || !installState.running) return false;
@@ -462,11 +613,19 @@ const RemoteManager: React.FC = () => {
           </div>
           <div className="space-y-2">
             <button
-              onClick={enableSsh}
+              onClick={sshStatus?.serviceRunning || sshStatus?.listeningOn22 ? disableSsh : enableSsh}
               disabled={sshBusy}
-              className="w-full py-3 rounded-xl bg-blue-600 text-white text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 disabled:opacity-50 active:scale-95 transition-all"
+              className={`w-full py-3 rounded-xl text-white text-[10px] font-black uppercase tracking-widest disabled:opacity-50 active:scale-95 transition-all ${
+                sshStatus?.serviceRunning || sshStatus?.listeningOn22
+                  ? 'bg-red-600 hover:bg-red-700'
+                  : 'bg-blue-600 hover:bg-blue-700'
+              }`}
             >
-              {sshBusy ? 'Enabling SSH...' : 'Enable SSH 22'}
+              {sshBusy
+                ? 'Working...'
+                : sshStatus?.serviceRunning || sshStatus?.listeningOn22
+                  ? 'Disable / Stop SSH 22'
+                  : 'Enable SSH 22'}
             </button>
             {sshStatus?.lanIp && (
               <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 text-[10px] text-blue-700 font-bold uppercase tracking-widest">
@@ -606,11 +765,53 @@ const RemoteManager: React.FC = () => {
               />
               <button
                 onClick={installTailscale}
-                disabled={tailscaleBusy}
+                disabled={tailscaleBusy || tailscaleOperationState?.running === true}
                 className="w-full py-2.5 rounded-xl bg-blue-600 text-white text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 disabled:opacity-50 active:scale-95 transition-all"
               >
-                {tailscaleBusy ? 'Setting Up...' : tailscaleStatus?.installed ? 'Run Tailscale Up' : 'Install Tailscale'}
+                {tailscaleOperationState?.running && tailscaleOperationState.operation === 'install'
+                  ? 'Installing...'
+                  : tailscaleBusy
+                    ? 'Starting...'
+                    : tailscaleStatus?.installed
+                      ? 'Run Tailscale Up'
+                      : 'Install Tailscale'}
               </button>
+              {tailscaleStatus?.installed && (
+                <button
+                  onClick={uninstallTailscale}
+                  disabled={tailscaleBusy || tailscaleOperationState?.running === true}
+                  className="w-full py-2.5 rounded-xl bg-red-600 text-white text-[10px] font-black uppercase tracking-widest hover:bg-red-700 disabled:opacity-50 active:scale-95 transition-all"
+                >
+                  {tailscaleOperationState?.running && tailscaleOperationState.operation === 'uninstall'
+                    ? 'Uninstalling...'
+                    : 'Uninstall Tailscale'}
+                </button>
+              )}
+              {(tailscaleOperationState?.running || tailscaleOperationState?.success !== null || tailscaleOperationState?.error) && (
+                <div className="mt-2 space-y-1">
+                  <div className="flex items-center justify-between text-[9px] font-bold uppercase tracking-widest text-slate-500">
+                    <span>{tailscaleOperationState?.operation || 'operation'}</span>
+                    <span>{tailscaleProgress}%</span>
+                  </div>
+                  <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+                    <div
+                      className={`h-2 transition-all ${
+                        tailscaleOperationState?.error
+                          ? 'bg-red-600'
+                          : tailscaleOperationState?.operation === 'uninstall'
+                            ? 'bg-red-500'
+                            : 'bg-blue-600'
+                      }`}
+                      style={{ width: `${tailscaleProgress}%` }}
+                    />
+                  </div>
+                  {isTailscaleOperationStuck && (
+                    <div className="text-[9px] font-bold uppercase tracking-widest text-amber-600">
+                      No progress updates detected. Operation may be waiting on network/package manager.
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="text-[9px] text-slate-500 font-bold uppercase tracking-widest bg-slate-50 border border-dashed border-slate-200 rounded-xl p-2">
                 Best for remote work: install Tailscale on your Windows PC too, then use the Tailscale IP in WinSCP.
               </div>
@@ -622,6 +823,39 @@ const RemoteManager: React.FC = () => {
               {tailscaleError && (
                 <div className="bg-red-50 border border-red-200 rounded-xl p-2 text-[10px] text-red-700 font-bold uppercase tracking-widest">
                   {tailscaleError}
+                </div>
+              )}
+              {tailscaleOperationState?.loginUrl && (
+                <a
+                  href={tailscaleOperationState.loginUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block bg-blue-50 border border-blue-200 rounded-xl p-2 text-[10px] text-blue-700 font-black uppercase tracking-widest hover:bg-blue-100"
+                >
+                  Open Tailscale Login URL
+                </a>
+              )}
+            </div>
+          </div>
+          <div className="lg:col-span-3 bg-slate-900 rounded-2xl shadow-sm border border-slate-800 overflow-hidden">
+            <div className="p-3 border-b border-slate-800 bg-slate-950/70 flex items-center justify-between">
+              <h2 className="text-[10px] font-black text-slate-200 uppercase tracking-widest">
+                Tailscale Operation Logs
+              </h2>
+              <span className="text-[9px] font-mono text-slate-400">
+                {tailscaleOperationState?.logs?.length || 0} lines
+              </span>
+            </div>
+            <div className="p-3 max-h-64 overflow-y-auto text-[10px] font-mono text-slate-200 bg-slate-950/80">
+              {tailscaleOperationState && tailscaleOperationState.logs && tailscaleOperationState.logs.length > 0 ? (
+                tailscaleOperationState.logs.map((line, idx) => (
+                  <div key={`${idx}-${line.slice(0, 16)}`} className="whitespace-pre-wrap">
+                    {line}
+                  </div>
+                ))
+              ) : (
+                <div className="text-slate-500">
+                  No Tailscale operation logs yet. Start install/uninstall to see live output here.
                 </div>
               )}
             </div>
@@ -796,7 +1030,7 @@ const RemoteManager: React.FC = () => {
                   </span>
                   <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">
                     {installState?.running
-                      ? 'Installing...'
+                      ? `${installState.operation === 'uninstall' ? 'Uninstalling' : 'Installing'}...`
                       : installState?.success
                         ? 'Completed'
                         : installState?.error
@@ -816,22 +1050,42 @@ const RemoteManager: React.FC = () => {
                   }`}
                 >
                   {installState?.running
-                    ? 'Installing...'
+                    ? installState.operation === 'uninstall' ? 'Uninstalling...' : 'Installing...'
                     : effectiveStatus?.installed
                       ? 'Already Installed'
                       : 'Install ZeroTier'}
                 </button>
               </div>
+              {effectiveStatus?.installed && (
+                <button
+                  onClick={handleUninstallZeroTier}
+                  disabled={installState?.running === true}
+                  className="w-full py-2.5 rounded-xl bg-red-600 text-white text-[10px] font-black uppercase tracking-widest hover:bg-red-700 disabled:opacity-50 active:scale-95 transition-all"
+                >
+                  {installState?.running && installState.operation === 'uninstall'
+                    ? 'Uninstalling ZeroTier...'
+                    : 'Uninstall ZeroTier'}
+                </button>
+              )}
 
               <div className="mt-2 space-y-1">
+                <div className="flex items-center justify-between text-[9px] font-bold uppercase tracking-widest text-slate-500">
+                  <span>{installState?.operation || 'operation'}</span>
+                  <span>{installProgress}%</span>
+                </div>
                 <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
                   <div
-                    className="bg-blue-600 h-2 transition-all"
+                    className={`h-2 transition-all ${
+                      installState?.error
+                        ? 'bg-red-600'
+                        : installState?.operation === 'uninstall'
+                          ? 'bg-red-500'
+                          : 'bg-blue-600'
+                    }`}
                     style={{ width: `${installProgress}%` }}
                   />
                 </div>
-                <div className="flex items-center justify-between text-[9px] font-bold uppercase tracking-widest text-slate-500">
-                  <span>{installProgress}%</span>
+                <div className="flex items-center justify-end text-[9px] font-bold uppercase tracking-widest text-slate-500">
                   {isInstallStuck && (
                     <span className="text-amber-600">
                       No progress updates detected. Installation may be stuck.
