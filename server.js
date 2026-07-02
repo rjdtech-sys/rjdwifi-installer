@@ -7601,7 +7601,7 @@ app.get('/api/devices', requireAdmin, async (req, res) => {
         connectedAt: session ? session.connectedAt : (device.connected_at || Date.now()),
         lastSeen: device.last_seen || Date.now(),
         isActive: Boolean(session), // Device is active if it has an active session
-        isOnline: device.last_seen ? (Date.now() - device.last_seen) < 90000 : false, // Online if seen within 90s
+        isOnline: Boolean(device.is_active),
         isPaused: session ? Boolean(session.isPaused) : false,
         isPausable: session ? Boolean(session.isPausable) : false,
         sessionToken: session ? session.token : null,
@@ -7714,7 +7714,7 @@ app.post('/api/devices/scan', requireAdmin, async (req, res) => {
         // Update existing device - preserve session data if device has active session
         await db.run(
           'UPDATE wifi_devices SET ip = ?, hostname = ?, interface = ?, ssid = ?, signal = ?, last_seen = ?, is_active = ? WHERE mac = ?',
-          [device.ip, device.hostname, device.interface, device.ssid, device.signal, now, session ? 1 : 0, device.mac]
+          [device.ip, device.hostname, device.interface, device.ssid, device.signal, now, 1, device.mac]
         );
         
         // If IP changed and device has active session, re-apply whitelist/QoS for new IP
@@ -7730,7 +7730,7 @@ app.post('/api/devices/scan', requireAdmin, async (req, res) => {
         const id = `device_${now}_${Math.random().toString(36).substr(2, 9)}`;
         await db.run(
           'INSERT INTO wifi_devices (id, mac, ip, hostname, interface, ssid, signal, connected_at, last_seen, is_active, download_limit, upload_limit) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          [id, device.mac, device.ip, device.hostname, device.interface, device.ssid, device.signal, session ? session.connectedAt : now, now, session ? 1 : 0, defaultDl, defaultUl]
+          [id, device.mac, device.ip, device.hostname, device.interface, device.ssid, device.signal, session ? session.connectedAt : now, now, 1, defaultDl, defaultUl]
         );
         
         // If device has active session but was never whitelisted (e.g. after reboot), whitelist it now
@@ -7750,6 +7750,8 @@ app.post('/api/devices/scan', requireAdmin, async (req, res) => {
       const placeholders = scannedMacs.map(() => '?').join(',');
       // Only mark as inactive if device doesn't have an active session
       await db.run(`UPDATE wifi_devices SET is_active = 0 WHERE mac NOT IN (${placeholders}) AND mac NOT IN (SELECT mac FROM sessions WHERE remaining_seconds > 0)`, scannedMacs);
+    } else {
+      await db.run('UPDATE wifi_devices SET is_active = 0 WHERE mac NOT IN (SELECT mac FROM sessions WHERE remaining_seconds > 0)');
     }
     
     // Return updated device list with session data merged
@@ -7771,6 +7773,7 @@ app.post('/api/devices/scan', requireAdmin, async (req, res) => {
         connectedAt: session ? session.connectedAt : (device.connected_at || Date.now()),
         lastSeen: device.last_seen || Date.now(),
         isActive: Boolean(session), // Device is active if it has an active session
+        isOnline: Boolean(device.is_active),
         customName: device.custom_name || '',
         sessionTime: session ? session.remainingSeconds : 0, // Real remaining time from session
         totalPaid: session ? session.totalPaid : 0,
