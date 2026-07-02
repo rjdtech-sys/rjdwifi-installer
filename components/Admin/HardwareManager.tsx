@@ -385,8 +385,8 @@ const HardwareManager: React.FC = () => {
                  </div>
 
                  <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
-                   <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-                     <div className="flex-1">
+                   <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_12rem] md:items-end gap-3">
+                     <div className="min-w-0">
                        <label className="block text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Coin Pin (Main)</label>
                        <select
                          value={String(pin)}
@@ -400,7 +400,7 @@ const HardwareManager: React.FC = () => {
                          ))}
                        </select>
                      </div>
-                     <div className="flex-1">
+                     <div className="min-w-0">
                        <label className="block text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Relay Pin (Output)</label>
                        <select
                          value={relayPin !== null ? String(relayPin) : ''}
@@ -421,12 +421,12 @@ const HardwareManager: React.FC = () => {
                      <button
                        onClick={handleSave}
                        disabled={saving}
-                       className="admin-btn-primary w-full sm:w-48 py-3 rounded-lg font-black text-[10px] uppercase tracking-[0.2em] transition-all shadow-lg active:scale-95 disabled:opacity-50 flex justify-center items-center gap-2"
+                       className="admin-btn-primary w-full h-[38px] rounded-lg font-black text-[10px] uppercase tracking-[0.2em] transition-all shadow-lg active:scale-95 disabled:opacity-50 flex justify-center items-center gap-2"
                      >
                        <Save size={12} />
                        {saving ? 'Saving...' : 'Apply Config'}
                      </button>
-                     <p className="basis-full text-[9px] font-bold uppercase tracking-widest text-slate-400">
+                     <p className="md:col-span-3 text-[9px] font-bold uppercase tracking-widest text-slate-400 leading-relaxed">
                        RJD Custom Board v2 default: Pin 5 relay IN. Choose Disabled to turn relay output off.
                      </p>
                    </div>
