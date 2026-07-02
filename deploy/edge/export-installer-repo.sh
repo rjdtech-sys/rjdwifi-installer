@@ -40,6 +40,7 @@ INCLUDE_PATHS=(
   "index.html"
   "index-optimized.html"
   "index.tsx"
+  "install.sh"
   "latest_release.json"
   "lib"
   "metadata.json"
