@@ -291,6 +291,16 @@ function normalizeCoinSlot(slot) {
   return slot.trim().toUpperCase();
 }
 
+function getDefaultRelayPinForBoard(boardType, boardModel) {
+  // LPB Custom Board v2 convention for Orange Pi: relay IN signal on physical Pin 5.
+  // A saved blank relayPin still means "Disabled"; this default only applies when no
+  // relayPin config row exists yet.
+  if (boardType === 'orange_pi' || boardType === 'orange_pi_one') {
+    return 5;
+  }
+  return null;
+}
+
 function cleanupExpiredCoinSlotLocks() {
   const now = Date.now();
   for (const [slot, lock] of coinSlotLocks.entries()) {
@@ -5284,10 +5294,19 @@ app.get('/api/config', requireAdmin, async (req, res) => {
     const relayActiveMode = await db.get('SELECT value FROM config WHERE key = ?', ['relayActiveMode']);
     const mainCoinsOutStats = await db.get('SELECT value FROM config WHERE key = ?', ['main_coins_out_stats']);
     
-    res.json({ 
-      boardType: board?.value || 'none', 
+    const boardType = board?.value || 'none';
+    const boardModel = model?.value || null;
+    const defaultRelayPin = getDefaultRelayPinForBoard(boardType, boardModel);
+    const relayPinConfigured = !!relayPin;
+    const relayPinValue = relayPin?.value ? parseInt(relayPin.value, 10) : null;
+    const effectiveRelayPin = relayPinValue !== null
+      ? relayPinValue
+      : (!relayPinConfigured ? defaultRelayPin : null);
+
+    res.json({
+      boardType,
       coinPin: parseInt(pin?.value || '2'),
-      boardModel: model?.value || null,
+      boardModel,
       espIpAddress: espIpAddress?.value || '192.168.4.1',
       espPort: parseInt(espPort?.value || '80'),
       coinSlots: coinSlots?.value ? JSON.parse(coinSlots.value) : [],
@@ -5295,7 +5314,9 @@ app.get('/api/config', requireAdmin, async (req, res) => {
       registrationKey: registrationKey?.value || '7B3F1A9',
       centralPortalIpEnabled: centralPortalIpEnabled?.value === '1' || centralPortalIpEnabled?.value === 'true',
       centralPortalIp: centralPortalIp?.value || '',
-      relayPin: relayPin?.value ? parseInt(relayPin.value, 10) : null,
+      relayPin: effectiveRelayPin,
+      relayDefaultPin: defaultRelayPin,
+      relayPinConfigured,
       relayActiveMode: relayActiveMode?.value === 'low' ? 'low' : 'high',
       mainCoinsOutStats: mainCoinsOutStats?.value ? JSON.parse(mainCoinsOutStats.value) : null
     });
@@ -9516,6 +9537,10 @@ async function bootupRestore(isRestricted = false) {
   const nodemcuDevices = await db.get('SELECT value FROM config WHERE key = ?', ['nodemcuDevices']);
   const relayPinRow = await db.get('SELECT value FROM config WHERE key = ?', ['relayPin']);
   const relayActiveModeRow = await db.get('SELECT value FROM config WHERE key = ?', ['relayActiveMode']);
+  const defaultRelayPin = getDefaultRelayPinForBoard(board?.value || 'none', model?.value);
+  const startupRelayPin = relayPinRow?.value
+    ? parseInt(relayPinRow.value, 10)
+    : (!relayPinRow ? defaultRelayPin : null);
   
   const coinCallback = (pesos) => {
     console.log(`[MAIN GPIO] Pulse Detected | Amount: ₱${pesos}`);
@@ -9534,7 +9559,7 @@ async function bootupRestore(isRestricted = false) {
       parseInt(espPort?.value || '80'),
       coinSlots?.value ? JSON.parse(coinSlots.value) : [],
       nodemcuDevices?.value ? JSON.parse(nodemcuDevices.value) : [],
-      relayPinRow?.value ? parseInt(relayPinRow.value, 10) : null,
+      startupRelayPin,
       relayActiveModeRow?.value === 'low' ? 'low' : 'high'
     );
   } catch (err) {

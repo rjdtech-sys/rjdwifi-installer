@@ -17,6 +17,8 @@ export interface SystemConfig {
   // Deprecated - kept for backward compatibility
   serialPort?: string;
   relayPin?: number | null;
+  relayDefaultPin?: number | null;
+  relayPinConfigured?: boolean;
   relayActiveMode?: 'high' | 'low';
 }
 

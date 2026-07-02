@@ -8,6 +8,9 @@ interface Props {
   onSaved: () => void;
 }
 
+const LPB_CUSTOM_BOARD_V2_RELAY_PIN = 5;
+const PHYSICAL_GPIO_PINS = [2, 3, 4, 5, 7, 8, 10, 11, 14, 15, 17, 18, 22, 23, 24, 25, 27];
+
 const HardwareSetup: React.FC<Props> = ({ onClose, onSaved }) => {
   const [board, setBoard] = useState<BoardType>('none');
   const [pin, setPin] = useState(3);
@@ -35,9 +38,7 @@ const HardwareSetup: React.FC<Props> = ({ onClose, onSaved }) => {
       if (cfg.coinSlots && cfg.coinSlots.length > 0) {
         setCoinSlots(cfg.coinSlots);
       }
-      if (typeof cfg.relayPin === 'number') {
-        setRelayPin(cfg.relayPin);
-      }
+      setRelayPin(typeof cfg.relayPin === 'number' ? cfg.relayPin : null);
       if (cfg.relayActiveMode === 'low' || cfg.relayActiveMode === 'high') {
         setRelayActiveMode(cfg.relayActiveMode);
       }
@@ -101,7 +102,10 @@ const HardwareSetup: React.FC<Props> = ({ onClose, onSaved }) => {
               />
               <BoardCard 
                 active={board === 'orange_pi'} 
-                onClick={() => setBoard('orange_pi')}
+                onClick={() => {
+                  setBoard('orange_pi');
+                  if (relayPin === null) setRelayPin(LPB_CUSTOM_BOARD_V2_RELAY_PIN);
+                }}
                 title="Orange Pi"
                 sub="All Models"
                 icon="🍊"
@@ -253,7 +257,7 @@ const HardwareSetup: React.FC<Props> = ({ onClose, onSaved }) => {
           <div className={`${board === 'none' ? 'opacity-40 pointer-events-none' : ''}`}>
             <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Coin Slot GPIO Pin (Physical)</label>
             <div className="grid grid-cols-4 sm:grid-cols-8 gap-2">
-              {[2, 3, 4, 7, 8, 10, 11, 14, 15, 17, 18, 22, 23, 24, 25, 27].map(p => (
+              {PHYSICAL_GPIO_PINS.map(p => (
                 <button
                   key={p}
                   onClick={() => setPin(p)}
@@ -284,7 +288,7 @@ const HardwareSetup: React.FC<Props> = ({ onClose, onSaved }) => {
               >
                 OFF
               </button>
-              {[2, 3, 4, 7, 8, 10, 11, 14, 15, 17, 18, 22, 23, 24, 25, 27].map(p => (
+              {PHYSICAL_GPIO_PINS.map(p => (
                 <button
                   key={p}
                   onClick={() => setRelayPin(p)}
@@ -294,10 +298,13 @@ const HardwareSetup: React.FC<Props> = ({ onClose, onSaved }) => {
                       : 'border-slate-200 text-slate-400 hover:border-slate-400'
                   }`}
                 >
-                  {p}
+                  {p === LPB_CUSTOM_BOARD_V2_RELAY_PIN ? '5 LPB' : p}
                 </button>
               ))}
             </div>
+            <p className="text-[10px] text-slate-400 mt-3 font-bold">
+              LPB Custom Board v2 default relay IN is physical Pin 5. Use OFF/Disabled if you do not want relay output.
+            </p>
             <div className="mt-3 flex flex-wrap items-center gap-3">
               <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Relay Mode</span>
               <div className="flex items-center gap-2 text-[10px] font-bold">
@@ -324,6 +331,9 @@ const HardwareSetup: React.FC<Props> = ({ onClose, onSaved }) => {
                   Active Low
                 </button>
               </div>
+              <p className="basis-full text-[9px] font-bold uppercase tracking-widest text-slate-400">
+                Active High triggers GPIO HIGH; Active Low triggers GPIO LOW. Toggle this if the relay works backward.
+              </p>
             </div>
           </div>
         </div>

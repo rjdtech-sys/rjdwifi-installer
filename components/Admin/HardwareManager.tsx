@@ -17,6 +17,7 @@ const opiPinoutModule: any = opiPinout as any;
 const opiMappings: Record<string, { name?: string; pins: Record<number, number> }> = opiPinoutModule?.mappings || {};
 const ORANGE_PI_MODELS = ['orange_pi_one', 'orange_pi_zero_3', 'orange_pi_pc', 'orange_pi_5', 'orange_pi_3_lts'];
 const ORANGE_PI_DEFAULT_MODEL = 'orange_pi_one';
+const LPB_CUSTOM_BOARD_V2_RELAY_PIN = 5;
 
 const rpiPinoutModule: any = rpiPinout as any;
 const rpiMappings: Record<string, { name?: string; pins: Record<number, number> }> = rpiPinoutModule?.mappings || {};
@@ -249,9 +250,7 @@ const HardwareManager: React.FC = () => {
       if (cfg.boardType === 'raspberry_pi' && cfg.boardModel) {
         setRpiBoardModel(cfg.boardModel);
       }
-      if (typeof cfg.relayPin === 'number') {
-        setRelayPin(cfg.relayPin);
-      }
+      setRelayPin(typeof cfg.relayPin === 'number' ? cfg.relayPin : null);
       if (cfg.relayActiveMode === 'low' || cfg.relayActiveMode === 'high') {
         setRelayActiveMode(cfg.relayActiveMode);
       }
@@ -339,7 +338,10 @@ const HardwareManager: React.FC = () => {
                   <div className="text-[9px] text-slate-500">BCM GPIO</div>
                 </button>
                 <button 
-                  onClick={() => setBoard('orange_pi')}
+                  onClick={() => {
+                    setBoard('orange_pi');
+                    if (relayPin === null) setRelayPin(LPB_CUSTOM_BOARD_V2_RELAY_PIN);
+                  }}
                   className={`p-3 rounded-lg border-2 text-left transition-all ${board === 'orange_pi' ? 'border-orange-500 bg-orange-50' : 'border-slate-100 hover:border-slate-300'}`}
                 >
                   <div className="text-[10px] font-black uppercase tracking-wide mb-0.5">Orange Pi</div>
@@ -411,10 +413,13 @@ const HardwareManager: React.FC = () => {
                          <option value="">Disabled</option>
                          {currentOrangePins.map(p => (
                            <option key={p} value={p}>
-                             {`Pin ${p} (${getOrangeGpioLabel(p)})`}
+                             {`Pin ${p} (${getOrangeGpioLabel(p)})${p === LPB_CUSTOM_BOARD_V2_RELAY_PIN ? ' - LPB Custom Board v2 Relay IN' : ''}`}
                            </option>
                          ))}
                        </select>
+                       <p className="mt-1 text-[9px] font-bold uppercase tracking-widest text-slate-400">
+                         LPB Custom Board v2 default: Pin 5 relay IN. Choose Disabled to turn relay output off.
+                       </p>
                      </div>
                      <button
                        onClick={handleSave}
@@ -480,6 +485,9 @@ const HardwareManager: React.FC = () => {
                         Active Low
                       </button>
                     </div>
+                    <p className="basis-full text-[9px] font-bold uppercase tracking-widest text-slate-400">
+                      Active High triggers GPIO HIGH; Active Low triggers GPIO LOW. Toggle this if the relay works backward.
+                    </p>
                  </div>
                </div>
              ) : isX64 ? (
